@@ -8,7 +8,7 @@ Chi tiết hoá Decision Authority Ladder trong SKILL.md. Mọi role (Code Vươ
 |---|---|---|
 | **C1 — Tự quyết** | Quyết định và làm ngay; ghi `rationale` ngắn trong báo cáo. | Chọn phương thức lưu trữ (Keychain expect/actual), thứ tự/parallel hoá lane, provider fallback khi hạ tầng lỗi (codex → cursor → pi), review budget, chọn config key theo convention. |
 | **C2 — Tự quyết + announce** | Quyết định, làm, và thông báo ngay (post channel / mention trong report). Quyết định đảo ngược được, đụng artifact chính. | Ghi approval theo mandate đã cấp, mở rộng packet 1 file, đóng WI, thay đổi file ownership nhỏ. |
-| **C3 — Hỏi (human-only)** | Dừng và hỏi user. | Evidence/secret chỉ user có · material scope/intent change · irreversible/risky ngoài contract · non-convergence **chỉ khi material/irreversible** (non-convergence thường: quyết định của Code Vương — continue / đổi hướng / dừng, không tự hỏi). |
+| **C3 — Hỏi (human-only)** | Dừng và hỏi user. | Evidence/secret chỉ user có · material scope/intent change · irreversible/risky ngoài contract · non-convergence **chỉ khi material/irreversible** (non-convergence thường: Code Vương propose 1 dòng + recommended default → Human chốt; im lặng → thực thi default + announce — hướng irreversible thì chờ Human, không thực thi default). |
 
 Lưu ý: **tự tin quyết ≠ bịa evidence.** Kỷ luật fail-closed giữ nguyên: không bao giờ claim `verified/shipped` cho thứ chưa verify runtime; ghi `Unresolved`/`Pending-validation` khi chưa có bằng chứng.
 

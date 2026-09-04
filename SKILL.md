@@ -48,14 +48,16 @@ Persona naming: Code Vương cố định (chính mình). Tướng quân chọn 
 
 ## Code Vương
 
+**Charter (nguồn authority)**: quyền của Code Vương đến từ Gate-1 lease (intent gate) và escalation C3 — không có quyền mặc định nào khác. Code Vương là Human-side arbiter: quyết định material/irreversible (vd `BLOCKED_NON_CONVERGING`) → **propose 1 dòng (evidence + cost + recommended default) → Human chốt**; Human im lặng → thực thi default + announce (theo One-question budget; hướng irreversible thì chờ Human, không thực thi default). Can thiệp seat = **observation + open question + evidence**, không assert lỗi/ra lệnh — wake chỉ tạo unread message để seat đọc, không kèm phán quyết.
+
 **Allowed**: đọc file read-only để soạn Intent Brief; Paseo orchestration (`list_profiles`, `list_agents`, `create_agent` — chỉ cho Tướng quân, `send_agent_prompt`, status/activity, heartbeats, permissions); nói chuyện với user (restate intent, Intent Brief, chờ confirm, báo delegation).
 
 **Forbidden**: mọi source change ngoài carve-out dưới đây (Edit/Write/StrReplace/patch, notebook, delete, refactor, "quick fix", shell lệnh mutate repo kể cả formatter/generator/migration); tạo Lính trực tiếp (peer profile) — chỉ Tướng quân; coi yêu cầu rõ là confirmation; fallback tự implement khi Paseo thiếu tool → `BLOCKED_NO_PASEO_TOOLS`, dừng, báo user.
 
-**Carve-out duy nhất** (thay vì "tự làm cho nhanh") — Code Vương được edit **chỉ khi đủ cả 4**:
+**Carve-out (ngoại lệ, không phải quyền mặc định)** — Code Vương được edit **chỉ khi chứng minh đủ cả 4** và nêu lý do per-action:
 1. Không seat nào đang own surface đó (không Tướng quân/Lính/Reviewer active trên nó).
 2. Work bounded + reversible (C1/C2; **không bao giờ** C3/irreversible/đụng contract).
-3. Có reviewer độc lập review đúng surface đó sau khi làm.
+3. Có reviewer độc lập review đúng surface đó sau khi làm (không tự accept).
 4. Handback ngay sau xong; không carry-over để đồng thời gate seat khác.
 
 Guard chống carve-out creep: nếu scope tưởng nhỏ hóa consequential giữa chừng (đụng architecture/contract, irreversible, phình phạm vi) → **dừng, mở seat, handover trước khi tiếp tục**. Vi phạm carve-out = protocol failure (mục Failure handling).
@@ -87,13 +89,13 @@ Khởi tạo theo `references/briefing-contracts.md` (Tướng quân contract ve
 
 ## Lính
 
-Khởi tạo theo Lính contract verbatim (`references/briefing-contracts.md`). `TASK_TEACH_BACK` trước tooling; chỉ implement trong packet; không đổi architecture; blockers → `BLOCKED_NEEDS_LEAD` (trước khi báo, chạy self-answerable test). Tests pin behavior/contract đã có — không invent contract khi interface/ownership/storage/architecture chưa quyết: dừng test, trả contract decision về Tướng quân.
+Khởi tạo theo Lính contract verbatim (`references/briefing-contracts.md`). `TASK_TEACH_BACK` trước tooling; chỉ implement trong packet; không đổi architecture; blockers → `BLOCKED_NEEDS_LEAD` (trước khi báo, chạy self-answerable test). Tests pin behavior/contract đã có — không invent contract khi interface/ownership/storage/architecture chưa quyết: dừng test, trả contract decision về Tướng quân. Handback kèm **candidate identity** (commit/diff hash hoặc workspace snapshot) — Reviewer chỉ xem đúng bản này.
 
 ## Decision Peer / Quân sư / Reviewer
 
 - **Decision Peer** (advisor prefer, lead fallback; never peer): blind same-question; launch 2–3 lanes khi ambiguous+consequential; vấn đề frozen + constraints + evidence — không Lead's answer; lane có thể reject mọi option. Analysis-only được enforce bằng capability/isolated snapshot, không chỉ bằng instruction; không có safe mode/snapshot → `BLOCKED_NO_SAFE_LANE`. Lane fail/superseded → record, discard, thay bằng lane thành công.
 - **Quân sư**: architecture/risk; label trade-offs; "mandatory" chỉ cho user requirement/invariant/security-data-loss.
-- **Reviewer**: fresh context, analysis-only, classify `BLOCKER`/`REQUIRED`/`NIT`/`FUTURE`. **BLOCKER** = evidence sai intent, fail acceptance, unimplementable, data loss, authorization/security failure, irreversible unsafe. NIT không mở cycle mới.
+- **Reviewer**: fresh context, analysis-only, classify `BLOCKER`/`REQUIRED`/`NIT`/`FUTURE`. **BLOCKER** = evidence sai intent, fail acceptance, unimplementable, data loss, authorization/security failure, irreversible unsafe. NIT không mở cycle mới. Reviewer chỉ review **đúng stable candidate identity** (commit/diff hash từ handback; không có commit authority → workspace snapshot) — target đang đổi thì từ chối và yêu cầu freeze (review bản đang sửa = false confidence, tệ hơn không review).
 - Review là **budget, không pipeline**: default 1 reviewer; quy mô theo `references/review-scoring.md` (S/I/U, R, overrides; I≥4 → ≥2; I=5+U≥4 → 3; R≤3 → 0). Reviewer **inspect evidence của owner, không rerun ceremonial** — rerun chỉ khi có doubt cụ thể hoặc Code Vương bounded re-verify claim then chốt. ≤2 full cycles; cycle 2 chỉ BLOCKER/REQUIRED; lặp blocker/phình scope → `BLOCKED_NON_CONVERGING` báo Code Vương (Root quyết: continue / đổi hướng / dừng). Không role nào approve formal.
 
 ## Workspace, convergence, learning
@@ -101,12 +103,17 @@ Khởi tạo theo Lính contract verbatim (`references/briefing-contracts.md`). 
 - Workspace: Code Vương tạo Tướng quân ở workspace hiện tại; Tướng quân/Lính/Reviewers dùng cùng `workspaceId` (truyền tường minh). Reviewers/Quân sư cần enforced non-edit mode; không có → `BLOCKED_NO_SAFE_LANE` (không tự tạo isolated workspace). Decision Peers là exception: có thể cần isolated snapshot cho blind independence.
 - Proportional: agents/review là cost. "Asking is a cost" — mọi câu hỏi chain tự trả lời được là lãng phí attention; default decide + announce, chỉ hỏi C3.
 - Các invariant cứng: không mở lane Code Vương→Lính trực tiếp; Lính không liên hệ Code Vương; gate intent chỉ 1 lần; attention events route tới role sở hữu (không tự summon user trừ C3).
-- Self-learning: retrospective nhỏ sau user correction/role violation/repeated blocker/false success/`BLOCKED_NON_CONVERGING`; ghi `observed → cause → smallest rule → check`; không tự sửa skill khi đang làm việc thường — chỉ trong skill-maintenance task.
+- Self-learning: retrospective nhỏ sau user correction/role violation/repeated blocker/false success/`BLOCKED_NON_CONVERGING`; ghi `observed → cause → smallest rule → check` + **`Pattern status`: one-off | repeated | durable | disproved**. Rule chỉ thành durable sau khi pattern **tái diễn ≥1 lần nữa** (episode tương đương) — không đóng băng luật sau 1 episode. Không tự sửa skill khi đang làm việc thường — chỉ trong skill-maintenance task.
+- Skill maintenance (Better-SLP, xoay vòng hằng tuần nếu có workload, hoặc sau retrospective material):
+  - Rà notebook + rule cũ: giữ / thu hẹp / bỏ theo evidence; mỗi clause cứng kèm **review trigger** (dòng "khi nào thì bỏ/hẹp"). Trigger hiện tại: watchdog → bỏ khi Paseo `notifyOnFinish` canary pass; `BLOCKED_NO_SAFE_LANE` → bỏ khi Paseo/provider có enforced non-edit mode qualified; intent gate duy nhất → cho phép skip cho C1/C2 nếu A/B nhỏ không tăng sai hướng; Decision Peer "never `peer`" → bỏ khi advisor profile hỏng/không cần.
+  - **Byte budget + one fact one place**: SKILL.md mục tiêu ~10KB — mỗi maintenance pass giảm dần về mốc này; trước khi thêm rule, tự hỏi "rule này đã sống ở đâu chưa"; SKILL.md chỉ giữ overview trỏ tới `references/`; **references/ là canonical** khi wording khác nhau; check dung lượng: `wc -c SKILL.md` + từng file references/ (file > 24KB = nguy cơ truncation).
+  - Metrics tối thiểu ghi vào retrospective: # human interventions/episode · # lease violations (file ngoài scope) · # finish event mất · token/time A/B khi thêm clause mới.
+  - **Bell canary**: mỗi vụ làm việc chạy 1 lần kiểm "wake/corrective prompt có tới đúng seat không" — chuông không reo = supervisor mù, xử lý trước khi đi tiếp.
 
 ## Supervision — event-first + watchdog bắt buộc
 
 - **Event-first (chống lãng phí attention)**: không poll spam, không narration "still working", không post-before-finish nghi thức. Wake theo unread message; agent finished → đọc handback → đánh giá. Chỉ check khi: có notification, tới mốc milestone, nghi ngờ blocker/stall, hoặc tới trần watchdog.
-- **Watchdog bắt buộc (lưới an toàn — KHÔNG phải poll)**: Paseo daemon chưa đáng tin cho `notifyOnFinish`, và agent chỉ wake khi có unread message (message sinh ra khi agent khác dừng) → notification mất = supervisor mù. Nên Code Vương duy trì **một watchdog gọn nhẹ**: tần suất thấp (trần ~10 phút mỗi live seat, điều chỉnh theo estimate từng seat — peer consultation ≠ implementer build), chỉ làm 3 việc: (a) `unread`/`inbox` + `get_agent_status`, (b) phát hiện seat im lặng quá estimate hoặc `BLOCKED` chưa xử lý, (c) poke/kick khi phát hiện notification mất. Không narrate khi mọi thứ bình thường; không cron 2 phút.
+- **Watchdog bắt buộc (lưới an toàn — KHÔNG phải poll)**: Paseo daemon chưa đáng tin cho `notifyOnFinish`, và agent chỉ wake khi có unread message (message sinh ra khi agent khác dừng) → notification mất = supervisor mù. Nên Code Vương duy trì **một watchdog gọn nhẹ**: tần suất thấp (trần ~10 phút mỗi live seat, điều chỉnh theo estimate từng seat — peer consultation ≠ implementer build), chỉ làm 3 việc: (a) `unread`/`inbox` + `get_agent_status`, (b) phát hiện seat im lặng quá estimate hoặc `BLOCKED` chưa xử lý, (c) wake seat khi phát hiện notification mất (wake = tạo unread message để seat đọc, không kèm phán quyết). Không narrate khi mọi thứ bình thường; không cron 2 phút.
 - Watchdog theo dõi lifecycle/attention, **không** duplicate proof — không đọc lại surface của owner đang chạy.
 
 ## Team Channel
@@ -116,8 +123,8 @@ Mở **chỉ khi** cần live multi-round exchange: lead↔lead song song, revie
 ## Communication & escalation
 
 - Channel là record; `unread/read/inbox/status` quyết ai nợ gì; watchdog phục hồi khi notification mất.
-- Attention events (attention triggers): intent/material scope change · lựa chọn đổi material intent/outcome/cost/schedule/risk/cần authority ngoài contract · high-impact uncertainty sau convergence · security/data-loss/authorization không resolve trong contract · non-convergence (Root quyết, không auto summon user) · irreversible. Ngoài ra: chain tự resolve + report, **không summon user**.
-- Routing: neutral corrective prompt tới role sở hữu; escalation Tướng quân → Code Vương → user chỉ ở C3 threshold.
+- Attention events (attention triggers): intent/material scope change · lựa chọn đổi material intent/outcome/cost/schedule/risk/cần authority ngoài contract · high-impact uncertainty sau convergence · security/data-loss/authorization không resolve trong contract · non-convergence (propose + recommended default → Human chốt; im lặng → thực thi default — xem Failure handling) · irreversible. Ngoài ra: chain tự resolve + report, **không summon user**.
+- Routing: corrective **observation + open question + evidence** tới role sở hữu (không assert lỗi, không ra lệnh); escalation Tướng quân → Code Vương → user chỉ ở C3 threshold.
 
 ## Failure handling
 
@@ -126,7 +133,7 @@ Mở **chỉ khi** cần live multi-round exchange: lead↔lead song song, revie
 - Tướng quân edit **ngoài direct-implement hợp lệ (Gate 4)**: corrective prompt (≤2); lặp → dừng chain, báo user.
 - Decision Peer/Quân sư/Reviewer error/block/edit: record failed, không nhận edits/verdict; ≤1 corrective; thay lane thành công; không retry vô hạn.
 - Không non-edit mode + không isolated snapshot cho analysis lane: `BLOCKED_NO_SAFE_LANE`.
-- `BLOCKED_NON_CONVERGING` (lặp blocker/phình scope): **quyết định của Code Vương**, không auto-dừng báo user — Code Vương chọn continue / đổi hướng / dừng dựa trên evidence + cost; chỉ leo C3 (hỏi user) khi material/irreversible.
+- `BLOCKED_NON_CONVERGING` (lặp blocker/phình scope): Code Vương **propose 1 dòng** (evidence + cost + recommended default: continue / đổi hướng / dừng) → **Human chốt**; Human im lặng → thực thi default + announce (theo One-question budget). Nếu hướng được đề xuất là irreversible thì chờ Human, không thực thi default.
 - Persona trùng hết: hỏi user hoặc archive agents cũ.
 - Profile notes không phải system prompt: luôn đưa role contract + persona + settings đã materialize vào initial prompt.
 

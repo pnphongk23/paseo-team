@@ -29,6 +29,8 @@ Lens cho 3 reviewer: correctness/evidence · architecture/risk · security/migra
 ## Review rules
 
 - Review là **budget, không pipeline**: lượng hóa S/I/U trước launch; R≤3 → 0 reviewer; default 1; quy mô theo bảng trên. Không ép reviewer cho mọi task.
+- Reviewer chỉ review **đúng stable candidate identity** (commit/diff hash từ handback; không có commit authority → workspace snapshot); target đang đổi → từ chối, yêu cầu freeze. Review bản đang sửa = false confidence, tệ hơn không review.
+- `R` cuối cùng do **Code Vương xác nhận lại từ diff thật** trước khi launch; implementer không tự ấn định ngân sách review cho chính mình (chống self-benchmark).
 - `BLOCKER` phải chứng minh: sai intent, không đạt acceptance, design unimplementable, data loss, authorization/security failure, irreversible unsafe action. Sở thích đặt tên, speculative extensibility, pseudocode signature, debt không liên quan ≠ blocker.
 - Reviewers độc lập song song: 1 lane đầu cho correctness/evidence trước.
 - Review cycle sau chỉ xét: fixes, unresolved findings, contradictions do fixes tạo ra. Dimension audit mới = `SCOPE_CHANGE_PROPOSAL` (trừ khi lộ blocker).
