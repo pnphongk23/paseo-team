@@ -28,12 +28,15 @@ Lens cho 3 reviewer: correctness/evidence · architecture/risk · security/migra
 
 ## Review rules
 
+- Review là **budget, không pipeline**: lượng hóa S/I/U trước launch; R≤3 → 0 reviewer; default 1; quy mô theo bảng trên. Không ép reviewer cho mọi task.
 - `BLOCKER` phải chứng minh: sai intent, không đạt acceptance, design unimplementable, data loss, authorization/security failure, irreversible unsafe action. Sở thích đặt tên, speculative extensibility, pseudocode signature, debt không liên quan ≠ blocker.
 - Reviewers độc lập song song: 1 lane đầu cho correctness/evidence trước.
 - Review cycle sau chỉ xét: fixes, unresolved findings, contradictions do fixes tạo ra. Dimension audit mới = `SCOPE_CHANGE_PROPOSAL` (trừ khi lộ blocker).
-- Tối đa **2 full review cycles**; cycle 2 chỉ cho `BLOCKER`/`REQUIRED` từ cycle 1. Cùng blocker lặp lại / blocker mới > blocker đã solve / scope phình → `BLOCKED_NON_CONVERGING`, trả Code Vương/user.
+- Tối đa **2 full review cycles**; cycle 2 chỉ cho `BLOCKER`/`REQUIRED` từ cycle 1. Cùng blocker lặp lại / blocker mới > blocker đã solve / scope phình → `BLOCKED_NON_CONVERGING`, trả Code Vương — **Root quyết** (continue / đổi hướng / dừng theo evidence + cost), không auto-dừng báo user; chỉ leo C3 nếu material/irreversible.
 - Không role nào cho formal approval. Task Contract thỏa + work cải thiện trạng thái hiện tại = xong; perfection/cleanup không liên quan không cần.
 
 ## Báo cáo review (Tướng quân → Code Vương)
 
 `S`, `I`, `U`, tổng `R`, số reviewer budgeted, từng reviewer (ID, workspace, lens, verdict), lý do chọn budget, mọi cycle phụ kèm trigger. Code Vương verify qua Paseo rằng agents hoàn thành (không `error`/`closed`/blocked/canceled; lane failed/superseded được ghi, replacement thành công thỏa budget), inspect diff, tự rerun key checks — không chấp nhận test-pass/review claim trần.
+
+**Anti duplicate proof**: Reviewer inspect evidence của owner (đọc report + diff + artifacts), **không rerun ceremonial** cùng validation để xác nhận cho có — rerun chỉ khi doubt cụ thể không resolve được từ evidence. Code Vương được bounded re-verify key checks trên claim then chốt (đây là guard chống self-deception, không phải duplicate proof).

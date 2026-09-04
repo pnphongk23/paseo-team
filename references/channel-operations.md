@@ -18,7 +18,7 @@ node <channel-tool> init \
 - `<channel-tool>` = `$PASEO_HOME`… thực tế: `~/.agents/skills/paseo-team/assets/channel/channel.mjs` (bản đang dùng).
 - Members JSON: `[{agentId, role, persona, parent?}]`; role ∈ supervisor/lead/peer/reviewer; peer/reviewer **bắt buộc** `parent` = lead agentId; supervisor member phải bằng `--by`; `--max-rounds` nên ≥ fan-out (vd 20) chứ không để default 3.
 - Channel dir (global): `$PASEO_HOME/team-channels/v1/<workspaceId>/<channelId>/` (mặc định `$HOME/.paseo`). Không tạo `.team/` trong project.
-- `init` cài 1 cron watchdog (`*/2 * * * *`, marker riêng); `close` gỡ entry. Re-init idempotent (giữ marker, thay channel.json) — dùng để **đăng ký member mới** với full roster mới nhất.
+- `init` cài 1 cron watchdog (`*/10 * * * *`, marker riêng — tần suất thấp, là lưới an toàn cho notification mất, không phải poll nhanh); `close` gỡ entry. Re-init idempotent (giữ marker, thay channel.json) — dùng để **đăng ký member mới** với full roster mới nhất.
 
 ## File layout
 
@@ -28,6 +28,7 @@ node <channel-tool> init \
 
 | Lệnh | Công dụng |
 |---|---|
+| `help [role\|command]` (hay `--help`/`-h`, kể cả gõ thiếu) | Cheat sheet: lệnh, message schema, routing matrix, "một turn đúng quy trình". Lọc theo role hoặc lệnh. **Điểm tự học của agent mới.** |
 | `unread <dir> <agentId>` | Inbound chưa đọc (authoritative read view) |
 | `inbox <dir> <agentId>` | Mục mình nợ trả lời (open questions/escalates) |
 | `post <dir> '<json>'` | Gửi; validate member/routing/replyTo/thread/budget; tự gán id/ts/round |
@@ -66,14 +67,15 @@ Denied default: peer→supervisor, peer→lead khác/peer/reviewer (trừ reply-
 
 ## Deterministic supervisor watchdog
 
-- `init` cài cron `*/2` chạy `supervisor.mjs <channelDir>` — tạo agent không, gọi LLM không; đọc log messages + receipts + reminder state + `paseo agent ls --global --json`.
+- `init` cài cron `*/10` chạy `supervisor.mjs <channelDir>` — tạo agent không, gọi LLM không; đọc log messages + receipts + reminder state + `paseo agent ls --global --json`.
 - Idle member có unread/open → reminder; running member → chỉ khi overdue (`--overdue-ms`); reminder qua `paseo agent send --no-wait`, không thành channel message; `reminders.json` chống reminder storm.
+- Watchdog theo dõi lifecycle/attention — không narrate khi bình thường, không đọc lại surface của owner đang chạy (không duplicate proof). Event-first là hành vi mặc định; watchdog `*/10` chỉ catch notification mất / seat im lặng quá estimate.
 - `--dry-run --agents-file <json>` để mô phỏng. `supervisor/watchdog.log` cho output bền.
 
 ## Channel brief fragment (khi Code Vương mở channel, append vào mọi role prompt)
 
 ```text
-A team channel is open for this task: channel <channelId>, directory <channelDir> (in the canonical workspace). Read <channelDir>/rules.md first. You are auto-joined as <role> (parent: <parentAgentId|none>). At each exchange point use `node channel.mjs unread <channelDir> <yourAgentId>` and `node channel.mjs inbox <channelDir> <yourAgentId>`, answer exactly what you owe (kind answer/ack/eod), then mark consumed messages with `node channel.mjs read <channelDir> <yourAgentId> <messageId...>` and post everything through `node channel.mjs post`. Do not hand-edit messages/, receipts/, or supervisor/. Post kind eod when you have nothing more; never continue an exchange past your round budget. Escalate to the supervisor only via kind escalate. Run `node channel.mjs status <channelDir>` before finishing and report unread/open items.
+A team channel is open for this task: channel <channelId>, directory <channelDir> (in the canonical workspace). Read <channelDir>/rules.md first. You are auto-joined as <role> (parent: <parentAgentId|none>). Before your first post run `node channel.mjs --help <role>` to see exactly who you may address and the message schema. At each exchange point use `node channel.mjs unread <channelDir> <yourAgentId>` and `node channel.mjs inbox <channelDir> <yourAgentId>`, answer exactly what you owe (kind answer/ack/eod), then mark consumed messages with `node channel.mjs read <channelDir> <yourAgentId> <messageId...>` and post everything through `node channel.mjs post`. Do not hand-edit messages/, receipts/, or supervisor/. Post kind eod when you have nothing more; never continue an exchange past your round budget. Escalate to the supervisor only via kind escalate. Run `node channel.mjs status <channelDir>` before finishing and report unread/open items.
 ```
 
 ## Register member mới (lead tạo child)
@@ -88,4 +90,4 @@ Lính/Reviewer/Decision Peer tạo bởi Tướng quân phải được đăng k
 - Channel là **nguồn sự thật**; finishNotification/notification có thể bị mất (daemon không đáng tin) — không bao giờ dựa một mình vào chúng.
 - Mọi turn kết thúc với blocker / gate verdict / work-chunk hoàn tất / cần bước tiếp theo: **bắt buộc post info/answer/eod lên channel trước khi finish**.
 - Role nào pause work phải post: cái gì đang chặn, bị chặn bởi ai, gì sẽ unblock.
-- Supervisor audit `unread`/`inbox` đầu mỗi turn; nếu lane finished còn follow-up và không ai running → resume role chịu trách nhiệm ngay, không chờ notification.
+- Supervisor audit `unread`/`inbox` đầu mỗi turn (không poll giữa chừng khi mọi thứ bình thường — event-first; watchdog `*/10` là lưới an toàn); nếu lane finished còn follow-up và không ai running → resume role chịu trách nhiệm ngay, không chờ notification.
