@@ -187,14 +187,22 @@ function writeReminderState(channelDir, state) {
 
 export function buildReminderPrompt({ channelDir, unreadCount, openCount, overdueCount }) {
   const parts = [];
-  if (unreadCount > 0) parts.push(`Bạn có ${unreadCount} tin nhắn chưa đọc`);
-  if (openCount > 0) parts.push(`${openCount} mục chưa xử lý`);
+  if (unreadCount > 0) parts.push(`${unreadCount} tin nhắn chưa đọc`);
+  if (openCount > 0) parts.push(`${openCount} mục đang nợ trả lời`);
   if (overdueCount > 0) parts.push(`${overdueCount} mục đã quá hạn`);
-  const summary = parts.length > 0 ? `${parts.join("; ")}.` : "Bạn có tin nhắn cần kiểm tra.";
+  const summary =
+    parts.length > 0 ? `Bạn có ${parts.join("; ")} trên team channel.` : "Có hoạt động team channel cần kiểm tra.";
   return [
     summary,
-    "Cân nhắc việc đọc tin nhắn, và tiếp tục công việc hiện tại nếu cần.",
-    `Hãy kiểm tra channel inbox tại ${channelDir}; sau khi đã đọc, chạy channel.mjs read để ghi nhận read receipt.`,
+    "Phân biệt 2 view (thay <dir> và <agentId> bằng giá trị của bạn):",
+    "  • channel.mjs unread <dir> <agentId>  = tin bạn chưa đọc",
+    "  • channel.mjs inbox <dir> <agentId>   = mục bạn ĐANG NỢ phải trả lời (open items)",
+    "Watchdog nhắc chủ yếu vì mục nợ/open, dù unread có thể = 0.",
+    "Cân nhắc xử lý và tiếp tục công việc hiện tại nếu cần.",
+    `Channel tại ${channelDir}.`,
+    "QUAN TRỌNG: mục open chỉ được coi là xử lý xong khi bạn post answer/ack/eod (kèm replyTo) lên channel.",
+    "Chạy channel.mjs read <dir> <agentId> <id...> CHỈ đánh dấu đã đọc, KHÔNG settle câu hỏi.",
+    "Post xử lý qua: channel.mjs post <dir> '<json>'. Không tự sửa messages/ trực tiếp.",
   ].join("\n");
 }
 

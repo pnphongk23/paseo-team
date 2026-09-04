@@ -21,6 +21,7 @@
  *   node channel.mjs rounds   <dir> <agentId>
  *   node channel.mjs status   <dir>
  *   node channel.mjs close    <dir> --by <supervisorAgentId>
+ *   node channel.mjs help     [role|command]   # or --help / -h (no command prints help too)
  *
  * Message JSON for `post`:
  *   { "from": "<agentId>", "to": ["<agentId>|role|*"], "kind": "question|answer|info|ack|eod|escalate|close",
@@ -721,6 +722,80 @@ function cmdStatus(ch) {
   );
 }
 
+const ROLE_SCOPE = {
+  supervisor: "You may send to ANYONE and broadcast with to:[\"*\"]. You alone may post kind close.",
+  lead: "You may send to: supervisor, any lead (peer leads), your OWN peers (those with parent = you), reviewers.",
+  peer: "You may send to your parent lead ONLY. You may also REPLY (answer/ack/eod) to a reviewer's DIRECT question, but never initiate to a reviewer, never escalate.",
+  reviewer: "You may send to your parent lead and that lead's peers ONLY. You may ask a peer a mission-relevant question; the peer may reply once.",
+};
+
+function cmdHelp(filter) {
+  const header = [
+    "paseo-team channel.mjs — file-based team chat bus on the shared workspace.",
+    "Paseo has no chat API; team members talk through this tool. All posts go through",
+    "`post` so routing + budgets are enforced. Never hand-edit messages/, receipts/, or supervisor/.",
+    "",
+  ];
+  const commands = [
+    "init    [<dir>] --channel-id <id> --workspace-id <ws> --by <supervisorId> --members '<json>'",
+    "path    --channel-id <id> --workspace-id <ws>",
+    "permit  <dir> <fromAgentId> <toAgentId|role|*>",
+    "post    <dir> '<messageJson>'   (or '-' to read stdin)",
+    "inbox   <dir> <agentId>            open items you owe a reply to",
+    "unread  <dir> <agentId>            inbound addressed to you, not yet read",
+    "read    <dir> <agentId> <id...> [--all]",
+    "threads <dir> | pending <dir> | wake <dir> <agentId> | rounds <dir> <agentId>",
+    "status  <dir>",
+    "close   <dir> --by <supervisorAgentId>",
+    "help    [role|command]",
+  ];
+  const postSchema = [
+    "Post message JSON:",
+    `  { "from":"<agentId>", "to":["<agentId>|role|*"], "kind":"${[...KINDS].join("|")}",`,
+    '    "body":"text", "threadId":"<optional>", "replyTo":"<optional message id>" }',
+    "  replyTo must reference the parent message and keep its threadId.",
+    "  question/escalate stay actionable until the asked agent posts answer/ack/eod in that thread; read does not settle.",
+    "",
+  ];
+  const matrix = [
+    "Routing matrix (denied by default):",
+    "  supervisor -> anyone, \"*\" broadcast; may post kind close",
+    "  lead       -> supervisor, any lead (peer leads), its OWN peers (parent = it), reviewers",
+    "  peer       -> its parent lead ONLY; + reply-only answer/ack/eod to a reviewer's DIRECT question (never initiates)",
+    "  reviewer   -> its parent lead and that lead's peers ONLY",
+    "Escalate (kind: escalate) -> supervisor only.",
+    "",
+  ];
+  const turn = [
+    "One turn (do this each exchange point):",
+    "  1. unread <dir> <yourAgentId>   2. inbox <dir> <yourAgentId>",
+    "  3. answer exactly what you owe (kind answer/ack/eod, set replyTo)",
+    "  4. read <dir> <yourAgentId> <id...>  (mark consumed; does NOT settle)",
+    "  5. post <dir> '<json>'          6. eod when you have nothing more",
+    "  7. status <dir> before finishing; report unread/open items.",
+    "",
+  ];
+
+  if (filter && ROLES.includes(filter)) {
+    console.log([...header, `ROLE: ${filter.toUpperCase()}`, `  ${ROLE_SCOPE[filter]}`, "", ...matrix, ...turn, "Run `channel.mjs --help` for the full command list."].join("\n"));
+    return;
+  }
+  if (filter) {
+    console.log([...header, "Commands (dir = channel dir from `path`/`init`):", ...commands.map((l) => (l.includes(filter) ? `>> ${l}` : `   ${l}`)), "", ...postSchema, ...matrix, ...turn].join("\n"));
+    return;
+  }
+  console.log([
+    ...header,
+    "Commands (dir = channel dir from `path`/`init`; run from anywhere):",
+    ...commands.map((l) => `  ${l}`),
+    "",
+    ...postSchema,
+    ...matrix,
+    ...turn,
+    "See references/channel-operations.md for watchdog + member registration.",
+  ].join("\n"));
+}
+
 function cmdClose(ch, by) {
   if (by !== ch.createdBy) fail("only the channel creator (supervisor) may close");
   ch.state = "closed";
@@ -755,14 +830,18 @@ function cmdClose(ch, by) {
 
 const args = process.argv.slice(2);
 const cmd = args.shift();
+if (cmd === undefined || cmd === "--help" || cmd === "-h" || cmd === "help") {
+  cmdHelp(args[0]);
+  process.exit(0);
+}
 let dir = null;
 if (cmd === "init") {
   if (args[0] && !args[0].startsWith("--")) dir = args.shift();
 } else if (cmd !== "path") {
   dir = args.shift();
 }
-if (!cmd || (dir === null && cmd !== "init" && cmd !== "path")) {
-  console.error("usage: channel.mjs init [<dir>] [options] | path [options] | <command> <dir> [args]");
+if (dir === null && cmd !== "init" && cmd !== "path") {
+  console.error(`channel: ${cmd} requires a channel <dir>   (try \`channel.mjs --help\`)`);
   process.exit(2);
 }
 function parseOpts(a) {
