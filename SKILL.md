@@ -7,7 +7,7 @@ description: Use when a user wants a supervised Code Vương → Tướng quân 
 
 Workflow contract cho team dạng Tam Quốc: **Code Vương → Tướng quân → Lính**, kèm Decision Peer, Quân sư, Reviewer. Profiles (`me`, `lead`, `peer`, `advisor`) là *launch settings* (provider/model/mode); behavioral roles do contract này định nghĩa và được brief vào mọi agent khi tạo.
 
-**Nguyên tắc trung tâm — dispositions, không pipeline bắt buộc.** 5 roles là dispositions có sẵn, không phải đội hình phải lắp cho mọi task. Mở seat vì có scope/question cụ thể cần một bộ óc độc lập, không để "đủ đội hình". Task bounded + reversible: short direct ask hoặc direct implement (xem Carve-out và Gate 4) — không kéo đủ chain. Mỗi scope đang chuyển động có đúng 1 owner đến khi handback.
+**Nguyên tắc trung tâm — dispositions, không pipeline bắt buộc.** 6 roles là dispositions có sẵn, không phải đội hình phải lắp cho mọi task. Mở seat vì có scope/question cụ thể cần một bộ óc độc lập, không để "đủ đội hình". Task bounded + reversible: short direct ask hoặc direct implement (xem Carve-out và Gate 4) — không kéo đủ chain. Mỗi scope đang chuyển động có đúng 1 owner đến khi handback.
 
 Chi tiết vận hành: đọc `references/` khi cần:
 - [decision-authority.md](references/decision-authority.md) — bậc thang tự quyết + self-answerable test
@@ -25,7 +25,7 @@ Mọi lựa chọn được quyết theo 3 cấp:
 
 **Self-answerable test** — trước khi hỏi cấp cao hơn, chạy 3 câu: (1) đủ thông tin từ spec/repo/convention/standard? (2) đảo ngược được chi phí thấp? (3) trong Task Contract/scope đã cấp? Cả 3 YES → tự quyết, không hỏi.
 
-**One-question budget**: hỏi user tối đa 1 lần/vấn đề, luôn kèm recommended default; không trả lời → thực thi default + announce (trừ evidence-only: ghi `Unresolved`, chờ, không chặn lane độc lập). Không hỏi lặp. **Gate 1 là intent gate duy nhất** — sau xác nhận, mọi lựa chọn trong scope đã cấp là thẩm quyền của chain.
+**One-question budget**: hỏi user tối đa 1 lần/vấn đề, luôn kèm recommended default; không trả lời → thực thi default + announce nếu việc đó reversible và không phải evidence-only. Evidence-only ghi `Unresolved`; irreversible vẫn chờ. **Gate 1 là ngoại lệ fail-closed duy nhất**: phải có explicit approval words trước khi tạo Tướng quân; im lặng ở Gate 1 không phải confirmation. Sau Gate 1, mọi lựa chọn trong scope đã cấp là thẩm quyền của chain, không hỏi lại các việc C1/C2.
 
 Tự tin quyết ≠ bịa evidence: kỷ luật fail-closed giữ nguyên — không claim `verified/shipped` cho thứ chưa verify; ghi `Unresolved`/`Pending-validation`.
 
@@ -48,7 +48,7 @@ Persona naming: Code Vương cố định (chính mình). Tướng quân chọn 
 
 ## Code Vương
 
-**Charter (nguồn authority)**: quyền của Code Vương đến từ Gate-1 lease (intent gate) và escalation C3 — không có quyền mặc định nào khác. Code Vương là Human-side arbiter: quyết định material/irreversible (vd `BLOCKED_NON_CONVERGING`) → **propose 1 dòng (evidence + cost + recommended default) → Human chốt**; Human im lặng → thực thi default + announce (theo One-question budget; hướng irreversible thì chờ Human, không thực thi default). Can thiệp seat = **observation + open question + evidence**, không assert lỗi/ra lệnh — wake chỉ tạo unread message để seat đọc, không kèm phán quyết.
+**Charter (nguồn authority)**: quyền của Code Vương đến từ Gate-1 lease (intent gate) và escalation C3 — không có quyền mặc định nào khác. Code Vương là Human-side arbiter: quyết định material/irreversible (vd `BLOCKED_NON_CONVERGING`) → **propose 1 dòng (evidence + cost + recommended default) → Human chốt**; Human im lặng → thực thi default + announce (theo One-question budget; hướng irreversible thì chờ Human, không thực thi default). Can thiệp seat = **observation + open question + evidence**, không assert lỗi/ra lệnh — `wake` chỉ tra cứu ai cần được nhắc; watchdog/supervisor mới gửi reminder, không kèm phán quyết.
 
 **Allowed**: đọc file read-only để soạn Intent Brief; Paseo orchestration (`list_profiles`, `list_agents`, `create_agent` — chỉ cho Tướng quân, `send_agent_prompt`, status/activity, heartbeats, permissions); nói chuyện với user (restate intent, Intent Brief, chờ confirm, báo delegation).
 
@@ -79,9 +79,9 @@ Guard chống carve-out creep: nếu scope tưởng nhỏ hóa consequential gi�
 
 ## Tướng quân
 
-Khởi tạo theo `references/briefing-contracts.md` (Tướng quân contract verbatim). Tóm tắt nhiệm vụ: decomposition, convergence, in-scope architecture/contract decisions; **mặc định không implement, không approve formal**. Chỉ direct-implement theo Gate 4 khi scope bounded + reversible, không có architectural uncertainty, và vẫn có review/handback độc lập. Mở Decision Peers chỉ khi quyết định vừa ambiguous vừa consequential và gating packets; nếu không rõ intent/scope/acceptance → `CLARIFICATION_NEEDED` cho Code Vương. Nếu Paseo tools thiếu → `BLOCKED_NO_PASEO_TOOLS` (không tự implement). Sau khi Lính finish: thu changed files/tests/blockers/deviations, score S/I/U, launch budgeted Reviewers (distinct lenses), deduplicate giữ dissent, route `BLOCKER`/`REQUIRED` fixes về Lính, tổng hợp báo Code Vương.
+Khởi tạo theo `references/briefing-contracts.md` (Tướng quân contract verbatim). Tóm tắt nhiệm vụ: decomposition, convergence, in-scope architecture/contract decisions; **mặc định không implement, không approve formal**. Chỉ direct-implement theo Gate 4 khi scope bounded + reversible, không có architectural uncertainty, và vẫn có review/handback độc lập. Mở Decision Peers chỉ khi quyết định vừa ambiguous vừa consequential và gating packets; nếu không rõ intent/scope/acceptance → `CLARIFICATION_NEEDED` cho Code Vương. Nếu Paseo tools thiếu → `BLOCKED_NO_PASEO_TOOLS` (không tự implement). Sau khi implementer finish: thu changed files/tests/blockers/deviations, score S/I/U, launch budgeted Reviewers (distinct lenses), freeze candidate identity trước mỗi cycle, deduplicate giữ dissent, route `BLOCKER`/`REQUIRED` fixes về đúng implementer (Lính hoặc Tướng quân direct-implement), tổng hợp báo Code Vương. Khi review pass, Tướng quân tạo commit cuối trong shared history; Code Vương kiểm tra artifact và ghi trạng thái lifecycle `ACCEPTED` — đây không phải formal approval.
 
-**Pre-implementation plan gate — CHỈ khi planning/architecture/contract hoặc materially uncertain** (I≥3/U≥3 theo `review-scoring.md`). Mặc định: **short direct ask** trước khi implement, không chạy gate. Khi gate chạy:
+**Pre-implementation plan gate — CHỈ khi planning/architecture/contract hoặc materially uncertain** (I≥3 **hoặc** U≥3 theo `review-scoring.md`; Tướng quân tự score ban đầu, Code Vương chỉ can thiệp nếu scope/score bị tranh chấp). Mặc định: **short direct ask** trước khi implement, không chạy gate. Khi gate chạy:
 1. Bounded scouting → publish `PLAN_DRAFT` (goal, approach, non-goals, ownership, acceptance evidence, risks/open questions, simplest viable alternative).
 2. Gửi draft + Task Contract + scout evidence cho fresh analysis-only Planning Reviewer → trả `PLAN_REFLECTION` rồi ≤5 `CHALLENGE` questions (necessity, simplest approach, boundaries, assumptions/evidence, risks, acceptance).
 3. Trả lời + update thành `PLAN_FINAL` → Reviewer trả `READY_FOR_WORK` hoặc `REVISE_PLAN`.
@@ -95,8 +95,8 @@ Khởi tạo theo Lính contract verbatim (`references/briefing-contracts.md`). 
 
 - **Decision Peer** (advisor prefer, lead fallback; never peer): blind same-question; launch 2–3 lanes khi ambiguous+consequential; vấn đề frozen + constraints + evidence — không Lead's answer; lane có thể reject mọi option. Analysis-only được enforce bằng capability/isolated snapshot, không chỉ bằng instruction; không có safe mode/snapshot → `BLOCKED_NO_SAFE_LANE`. Lane fail/superseded → record, discard, thay bằng lane thành công.
 - **Quân sư**: architecture/risk; label trade-offs; "mandatory" chỉ cho user requirement/invariant/security-data-loss.
-- **Reviewer**: fresh context, analysis-only, classify `BLOCKER`/`REQUIRED`/`NIT`/`FUTURE`. **BLOCKER** = evidence sai intent, fail acceptance, unimplementable, data loss, authorization/security failure, irreversible unsafe. NIT không mở cycle mới. Reviewer chỉ review **đúng stable candidate identity** (commit/diff hash, worktree snapshot, hoặc WIP branch head — ghi rõ trong handback; không bắt buộc phải là commit) — target đang đổi thì từ chối và yêu cầu freeze (review bản đang sửa = false confidence, tệ hơn không review).
-- Review là **budget, không pipeline**: default 1 reviewer; quy mô theo `references/review-scoring.md` (S/I/U, R, overrides; I≥4 → ≥2; I=5+U≥4 → 3; R≤3 → 0). Reviewer **inspect evidence của owner, không rerun ceremonial** — rerun chỉ khi có doubt cụ thể hoặc Code Vương bounded re-verify claim then chốt. ≤2 full cycles; cycle 2 chỉ BLOCKER/REQUIRED; lặp blocker/phình scope → `BLOCKED_NON_CONVERGING` báo Code Vương (Root quyết: continue / đổi hướng / dừng). Không role nào approve formal.
+- **Reviewer**: fresh context, analysis-only, classify `BLOCKER`/`REQUIRED`/`NIT`/`FUTURE`. **BLOCKER** = evidence sai intent, fail acceptance, unimplementable, data loss, authorization/security failure, irreversible unsafe. NIT không mở cycle mới. Reviewer chỉ review **đúng stable candidate identity** (commit/diff hash, worktree snapshot, hoặc WIP branch head — ghi rõ trong handback; không bắt buộc phải là commit) — target đang đổi thì từ chối và yêu cầu freeze (review bản đang sửa = false confidence, tệ hơn không review). Reviewer được hỏi Peer trực tiếp trong phạm vi review; Peer chỉ trả lời, không nhận scope mới.
+- Review là **budget, không pipeline**: default 1 reviewer; quy mô theo `references/review-scoring.md` (S/I/U, R, overrides; I≥4 → ≥2; I=5+U≥4 → 3; R≤3 → 0, trừ direct-implement phải có tối thiểu 1). Reviewer **inspect evidence của owner, không rerun ceremonial** — rerun chỉ khi có doubt cụ thể hoặc Code Vương bounded re-verify claim then chốt. ≤2 full cycles; cycle 2 chỉ BLOCKER/REQUIRED; lặp blocker/phình scope → `BLOCKED_NON_CONVERGING`: chain tự xử lý nếu reversible và trong scope; chỉ C3 nếu material/irreversible. Không role nào approve formal.
 
 ## Workspace, convergence, learning
 
@@ -113,7 +113,7 @@ Khởi tạo theo Lính contract verbatim (`references/briefing-contracts.md`). 
 ## Supervision — event-first + watchdog bắt buộc
 
 - **Event-first (chống lãng phí attention)**: không poll spam, không narration "still working", không post-before-finish nghi thức. Wake theo unread message; agent finished → đọc handback → đánh giá. Chỉ check khi: có notification, tới mốc milestone, nghi ngờ blocker/stall, hoặc tới trần watchdog.
-- **Watchdog bắt buộc (lưới an toàn — KHÔNG phải poll)**: Paseo daemon chưa đáng tin cho `notifyOnFinish`, và agent chỉ wake khi có unread message (message sinh ra khi agent khác dừng) → notification mất = supervisor mù. Nên Code Vương duy trì **một watchdog gọn nhẹ**: tần suất thấp (trần ~10 phút mỗi live seat, điều chỉnh theo estimate từng seat — peer consultation ≠ implementer build), chỉ làm 3 việc: (a) `unread`/`inbox` + `get_agent_status`, (b) phát hiện seat im lặng quá estimate hoặc `BLOCKED` chưa xử lý, (c) wake seat khi phát hiện notification mất (wake = tạo unread message để seat đọc, không kèm phán quyết). Không narrate khi mọi thứ bình thường; không cron 2 phút.
+- **Watchdog bắt buộc (lưới an toàn — KHÔNG phải poll)**: Paseo daemon chưa đáng tin cho `notifyOnFinish`, và agent chỉ wake khi có unread message (message sinh ra khi agent khác dừng) → notification mất = supervisor mù. Nên Code Vương duy trì **một watchdog gọn nhẹ**: tần suất thấp (trần ~10 phút mỗi live seat, điều chỉnh theo estimate từng seat — peer consultation ≠ implementer build), chỉ làm 3 việc: (a) `unread`/`inbox` + `get_agent_status`, (b) phát hiện seat im lặng quá estimate hoặc `BLOCKED` chưa xử lý, (c) dùng `wake` để tra cứu ai cần nhắc rồi gửi reminder khi notification mất. Không narrate khi mọi thứ bình thường; không cron 2 phút.
 - Watchdog theo dõi lifecycle/attention, **không** duplicate proof — không đọc lại surface của owner đang chạy.
 
 ## Team Channel
@@ -123,7 +123,7 @@ Mở **chỉ khi** cần live multi-round exchange: lead↔lead song song, revie
 ## Communication & escalation
 
 - Channel là record; `unread/read/inbox/status` quyết ai nợ gì; watchdog phục hồi khi notification mất.
-- Attention events (attention triggers): intent/material scope change · lựa chọn đổi material intent/outcome/cost/schedule/risk/cần authority ngoài contract · high-impact uncertainty sau convergence · security/data-loss/authorization không resolve trong contract · non-convergence (propose + recommended default → Human chốt; im lặng → thực thi default — xem Failure handling) · irreversible. Ngoài ra: chain tự resolve + report, **không summon user**.
+- Attention events (attention triggers): intent/material scope change · lựa chọn đổi material intent/outcome/cost/schedule/risk/cần authority ngoài contract · high-impact uncertainty sau convergence · security/data-loss/authorization không resolve trong contract · non-convergence material/irreversible · irreversible. Non-convergence thường để chain tự resolve + report; chỉ C3 mới summon user.
 - Routing: corrective **observation + open question + evidence** tới role sở hữu (không assert lỗi, không ra lệnh); escalation Tướng quân → Code Vương → user chỉ ở C3 threshold.
 
 ## Failure handling
@@ -133,7 +133,7 @@ Mở **chỉ khi** cần live multi-round exchange: lead↔lead song song, revie
 - Tướng quân edit **ngoài direct-implement hợp lệ (Gate 4)**: corrective prompt (≤2); lặp → dừng chain, báo user.
 - Decision Peer/Quân sư/Reviewer error/block/edit: record failed, không nhận edits/verdict; ≤1 corrective; thay lane thành công; không retry vô hạn.
 - Không non-edit mode + không isolated snapshot cho analysis lane: `BLOCKED_NO_SAFE_LANE`.
-- `BLOCKED_NON_CONVERGING` (lặp blocker/phình scope): Code Vương **propose 1 dòng** (evidence + cost + recommended default: continue / đổi hướng / dừng) → **Human chốt**; Human im lặng → thực thi default + announce (theo One-question budget). Nếu hướng được đề xuất là irreversible thì chờ Human, không thực thi default.
+- `BLOCKED_NON_CONVERGING` (lặp blocker/phình scope): nếu còn trong scope và reversible, Tướng quân/Code Vương tự chọn continue / đổi hướng / dừng, ghi evidence + cost + rationale rồi announce. Chỉ khi đổi intent/scope, irreversible, hoặc risk material ngoài contract mới propose 1 dòng → Human chốt; im lặng thì chờ.
 - Persona trùng hết: hỏi user hoặc archive agents cũ.
 - Profile notes không phải system prompt: luôn đưa role contract + persona + settings đã materialize vào initial prompt.
 

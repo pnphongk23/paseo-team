@@ -22,7 +22,7 @@ Score toàn bộ logical task (không phải từng commit). **Ghi R trước kh
 | 9–12 | 2 | correctness/evidence + architecture/risk |
 | 13–15 | 3 | 3 lens riêng + ghi reason |
 
-**Overrides:** `I ≥ 4` → tối thiểu 2 reviewer. `I = 5` + (`U ≥ 4` hoặc irreversible) → 3 reviewer. `S ≥ 4` → tối thiểu 1. Handoff không tính là reviewer, không đổi R.
+**Overrides:** `I ≥ 4` → tối thiểu 2 reviewer. `I = 5` + (`U ≥ 4` hoặc irreversible) → 3 reviewer. `S ≥ 4` → tối thiểu 1. **Code Vương carve-out hoặc Tướng quân Gate 4 direct-implement → tối thiểu 1 reviewer**, kể cả khi R≤3. Handoff không tính là reviewer, không đổi R.
 
 Lens cho 3 reviewer: correctness/evidence · architecture/risk · security/migration/release/specialist. Quân sư là 1 trong các lens đó (không tự thêm lane).
 
@@ -34,9 +34,9 @@ Lens cho 3 reviewer: correctness/evidence · architecture/risk · security/migra
 - `R` cuối cùng do **Code Vương xác nhận lại từ diff thật** trước khi launch; implementer không tự ấn định ngân sách review cho chính mình (chống self-benchmark).
 - `BLOCKER` phải chứng minh: sai intent, không đạt acceptance, design unimplementable, data loss, authorization/security failure, irreversible unsafe action. Sở thích đặt tên, speculative extensibility, pseudocode signature, debt không liên quan ≠ blocker.
 - Reviewers độc lập song song: 1 lane đầu cho correctness/evidence trước.
-- Review cycle sau chỉ xét: fixes, unresolved findings, contradictions do fixes tạo ra. Dimension audit mới = `SCOPE_CHANGE_PROPOSAL` (trừ khi lộ blocker).
-- Tối đa **2 full review cycles**; cycle 2 chỉ cho `BLOCKER`/`REQUIRED` từ cycle 1. Cùng blocker lặp lại / blocker mới > blocker đã solve / scope phình → `BLOCKED_NON_CONVERGING`, trả Code Vương — **Root quyết** (continue / đổi hướng / dừng theo evidence + cost), không auto-dừng báo user; chỉ leo C3 nếu material/irreversible.
-- Không role nào cho formal approval. Task Contract thỏa + work cải thiện trạng thái hiện tại = xong; perfection/cleanup không liên quan không cần.
+- Sau mỗi handback, **Tướng quân freeze candidate identity** và ghi vào report trước khi launch/relaunch review. Review cycle sau chỉ xét: fixes, unresolved findings, contradictions do fixes tạo ra. Dimension audit mới = `SCOPE_CHANGE_PROPOSAL` (trừ khi lộ blocker).
+- Tối đa **2 full review cycles**; cycle 2 chỉ cho `BLOCKER`/`REQUIRED` từ cycle 1. Cùng blocker lặp lại / blocker mới > blocker đã solve / scope phình → `BLOCKED_NON_CONVERGING`: nếu reversible và trong scope, chain tự quyết continue / đổi hướng / dừng theo evidence + cost; chỉ leo C3 nếu material/irreversible.
+- Không role nào cho formal approval. Khi review budget hoàn tất, không còn `BLOCKER`/`REQUIRED`, final commit đã tạo và Code Vương đã kiểm tra artifact, ghi lifecycle `ACCEPTED`; đây là trạng thái hoàn tất workflow, không phải formal approval.
 
 ## Báo cáo review (Tướng quân → Code Vương)
 

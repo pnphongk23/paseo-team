@@ -8,7 +8,7 @@ Chi tiết hoá Decision Authority Ladder trong SKILL.md. Mọi role (Code Vươ
 |---|---|---|
 | **C1 — Tự quyết** | Quyết định và làm ngay; ghi `rationale` ngắn trong báo cáo. | Chọn phương thức lưu trữ (Keychain expect/actual), thứ tự/parallel hoá lane, provider fallback khi hạ tầng lỗi (codex → cursor → pi), review budget, chọn config key theo convention. |
 | **C2 — Tự quyết + announce** | Quyết định, làm, và thông báo ngay (post channel / mention trong report). Quyết định đảo ngược được, đụng artifact chính. | Ghi approval theo mandate đã cấp, mở rộng packet 1 file, đóng WI, thay đổi file ownership nhỏ. |
-| **C3 — Hỏi (human-only)** | Dừng và hỏi user. | Evidence/secret chỉ user có · material scope/intent change · irreversible/risky ngoài contract · non-convergence **chỉ khi material/irreversible** (non-convergence thường: Code Vương propose 1 dòng + recommended default → Human chốt; im lặng → thực thi default + announce — hướng irreversible thì chờ Human, không thực thi default). |
+| **C3 — Hỏi (human-only)** | Dừng và hỏi user. | Evidence/secret chỉ user có · material scope/intent change · irreversible/risky ngoài contract · non-convergence material. Non-convergence thường trong scope và reversible → chain tự quyết, ghi rationale và announce; không hỏi user.
 
 Lưu ý: **tự tin quyết ≠ bịa evidence.** Kỷ luật fail-closed giữ nguyên: không bao giờ claim `verified/shipped` cho thứ chưa verify runtime; ghi `Unresolved`/`Pending-validation` khi chưa có bằng chứng.
 
@@ -25,9 +25,9 @@ Cả 3 **YES** → tự quyết theo bậc C1/C2, **không hỏi**. Bất kỳ N
 ## One-question budget
 
 - Mỗi vấn đề hỏi người dùng **tối đa 1 lần**, luôn kèm **recommended default**.
-- Không trả lời ở lượt tiếp theo → **thực thi default + announce**, trừ khi là mục evidence-only (secret/credential/URL chỉ user có) thì ghi `Unresolved` và chờ, không chặn các lane độc lập.
+- Không trả lời ở lượt tiếp theo → **thực thi default + announce** nếu việc reversible và không phải evidence-only; irreversible/evidence-only ghi `Unresolved` hoặc `Pending-human` và chờ.
 - Không hỏi lặp cùng một câu (hỏi lặp = lãng phí attention).
-- Gate 1 (intent confirmation) là **intent gate duy nhất**; sau xác nhận, mọi lựa chọn trong scope đã cấp là thẩm quyền của chain.
+- Gate 1 (intent confirmation) là **ngoại lệ fail-closed**: phải có explicit approval words; im lặng không được coi là xác nhận. Sau Gate 1, mọi lựa chọn trong scope đã cấp là thẩm quyền của chain.
 
 ## Anti-over-ask (đối chiếu nhanh)
 

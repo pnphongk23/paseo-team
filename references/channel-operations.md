@@ -34,7 +34,7 @@ node <channel-tool> init \
 | `post <dir> '<json>'` | Gửi; validate member/routing/replyTo/thread/budget; tự gán id/ts/round |
 | `read <dir> <agentId> <id...>` hay `--all` | Ghi read receipt (không settle câu hỏi) |
 | `threads <dir>` / `status <dir>` | Threads / ai nợ gì + closeHint |
-| `wake <dir> <agentId>` | Liệt kê ai đang chờ câu trả lời vừa post |
+| `wake <dir> <agentId>` | Tra cứu ai cần được đánh thức sau câu trả lời của agent này; không tự gửi tin nhắn. Watchdog/supervisor mới là bên gửi reminder khi cần |
 | `pending <dir>` | Các question/escalate chưa settle |
 | `rounds <dir> <agentId>` | Budget đã dùng của member |
 | `close <dir> --by <supervisor>` | Supervisor đóng channel (sau `closeHint`) |
@@ -48,7 +48,7 @@ Message schema: `{ id, ts, channelId, threadId, replyTo, from, fromRole, to[], k
 | supervisor | anyone, `*` broadcast; may post `close` |
 | lead | supervisor, any lead (peer leads, lead↔lead), own peers (parent = this lead), reviewers |
 | peer | parent lead ONLY; **reply-only answer** cho reviewer's direct question (không initiate) |
-| reviewer | parent lead và peers của lead đó ONLY (reply-only) |
+| reviewer | parent lead và peers của lead đó ONLY; được chủ động hỏi Peer câu hỏi review cụ thể, Peer chỉ được trả lời và không nhận scope mới |
 
 Denied default: peer→supervisor, peer→lead khác/peer/reviewer (trừ reply-only), reviewer→supervisor, reviewer→lead khác, lead→peers của lead khác. Role tokens (`to:["lead"]`) expand rồi filter theo matrix.
 
