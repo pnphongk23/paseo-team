@@ -33,8 +33,8 @@ Tự tin quyết ≠ bịa evidence: kỷ luật fail-closed giữ nguyên — k
 
 | Role | Profile | Hành vi |
 |---|---|---|
-| Code Vương | `me` | Supervisor tầng cao: outcome/scope owner, attention router, verification gate. Không implement. |
-| Tướng quân | `lead` | Lead/coordinator: decomposition, convergence, quyết định architecture/contract trong scope. Không implement, không approve formal. |
+| Code Vương | `me` | Supervisor tầng cao: outcome/scope owner, attention router, verification gate. **Mặc định không implement**; chỉ dùng carve-out per-action ở dưới. |
+| Tướng quân | `lead` | Lead/coordinator: decomposition, convergence, quyết định architecture/contract trong scope. **Mặc định không implement**, không approve formal; chỉ direct-implement khi đủ Gate 4. |
 | Lính | `peer` | Worker thực thi có giới hạn (packet). |
 | Decision Peer | `advisor` (prefer), `lead` (fallback) | Independent reasoning peer: blind same-question analysis. Không bao giờ dùng `peer`. |
 | Quân sư | `advisor` | Architecture/risk advisory, không approve. |
@@ -79,7 +79,7 @@ Guard chống carve-out creep: nếu scope tưởng nhỏ hóa consequential gi�
 
 ## Tướng quân
 
-Khởi tạo theo `references/briefing-contracts.md` (Tướng quân contract verbatim). Tóm tắt nhiệm vụ: decomposition, convergence, in-scope architecture/contract decisions; **không implement, không approve formal**. Mở Decision Peers chỉ khi quyết định vừa ambiguous vừa consequential và gating packets; nếu không rõ intent/scope/acceptance → `CLARIFICATION_NEEDED` cho Code Vương. Nếu Paseo tools thiếu → `BLOCKED_NO_PASEO_TOOLS` (không tự implement). Sau khi Lính finish: thu changed files/tests/blockers/deviations, score S/I/U, launch budgeted Reviewers (distinct lenses), deduplicate giữ dissent, route `BLOCKER`/`REQUIRED` fixes về Lính, tổng hợp báo Code Vương.
+Khởi tạo theo `references/briefing-contracts.md` (Tướng quân contract verbatim). Tóm tắt nhiệm vụ: decomposition, convergence, in-scope architecture/contract decisions; **mặc định không implement, không approve formal**. Chỉ direct-implement theo Gate 4 khi scope bounded + reversible, không có architectural uncertainty, và vẫn có review/handback độc lập. Mở Decision Peers chỉ khi quyết định vừa ambiguous vừa consequential và gating packets; nếu không rõ intent/scope/acceptance → `CLARIFICATION_NEEDED` cho Code Vương. Nếu Paseo tools thiếu → `BLOCKED_NO_PASEO_TOOLS` (không tự implement). Sau khi Lính finish: thu changed files/tests/blockers/deviations, score S/I/U, launch budgeted Reviewers (distinct lenses), deduplicate giữ dissent, route `BLOCKER`/`REQUIRED` fixes về Lính, tổng hợp báo Code Vương.
 
 **Pre-implementation plan gate — CHỈ khi planning/architecture/contract hoặc materially uncertain** (I≥3/U≥3 theo `review-scoring.md`). Mặc định: **short direct ask** trước khi implement, không chạy gate. Khi gate chạy:
 1. Bounded scouting → publish `PLAN_DRAFT` (goal, approach, non-goals, ownership, acceptance evidence, risks/open questions, simplest viable alternative).
