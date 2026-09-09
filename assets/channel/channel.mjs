@@ -20,6 +20,9 @@
  *   node channel.mjs threads  <dir>
  *   node channel.mjs rounds   <dir> <agentId>
  *   node channel.mjs status   <dir>
+ *   node channel.mjs mission  <dir>
+ *   node channel.mjs checkpoint <dir> --by <agentId> --json '<checkpoint-json>'
+ *   node channel.mjs lease <dir> --by <supervisorId> --owner <leadId> --handoff-ref <ref>
  *   node channel.mjs close    <dir> --by <supervisorAgentId>
  *   node channel.mjs help     [role|command]   # or --help / -h (no command prints help too)
  *
@@ -54,9 +57,10 @@ const KINDS = new Set([...SUBSTANTIVE, ...CONTROL]);
 const RECEIPTS_DIR = "receipts";
 const SUPERVISOR_DIR = "supervisor";
 const SUPERVISOR_SCRIPT = "supervisor.mjs";
+const MISSION_FILE = "mission.json";
 const GLOBAL_CHANNEL_ROOT = "team-channels";
 const GLOBAL_CHANNEL_VERSION = "v1";
-const SUPERVISOR_CRON = "*/2 * * * *";
+const SUPERVISOR_CRON = "*/10 * * * *";
 const DEFAULT_OVERDUE_MS = 30 * 60 * 1000;
 const DEFAULT_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_REMINDERS = 3;
@@ -77,8 +81,8 @@ Escalation: kind escalate is supervisor-only.
 Loop safety: maxRoundsPerMember substantive posts, maxThreadsPerMember threads,
 maxMessages total. Settle each thread at most once (inbox shows what you owe).
 Read state is per-recipient in receipts/; use unread/read for read receipts.
-The deterministic supervisor job runs every 2 minutes and is removed when the channel closes.
-Never edit messages/ by hand; always post through channel.mjs.
+The deterministic supervisor job runs every 10 minutes and is removed when the channel closes.
+  Never edit messages/ or mission.json by hand; always post through channel.mjs, and use mission/checkpoint/lease commands for durable lease state.
 `;
 
 function fail(msg, code = 2) {
@@ -87,6 +91,42 @@ function fail(msg, code = 2) {
 }
 const now = () => new Date().toISOString();
 const readJson = (p) => JSON.parse(fs.readFileSync(p, "utf8"));
+
+function missionPath(dir) {
+  return path.join(dir, MISSION_FILE);
+}
+
+function loadMission(dir) {
+  const file = missionPath(dir);
+  if (!fs.existsSync(file)) return null;
+  const mission = readJson(file);
+  if (!mission || typeof mission !== "object" || Array.isArray(mission)) fail("mission.json must contain an object");
+  if (!mission.missionId || !Number.isInteger(mission.leaseEpoch) || mission.leaseEpoch < 1) {
+    fail("mission.json needs missionId and positive integer leaseEpoch");
+  }
+  return mission;
+}
+
+function newMission({ channelId, ownerId, requested }) {
+  const value = requested && typeof requested === "object" && !Array.isArray(requested) ? requested : {};
+  return {
+    schemaVersion: 1,
+    missionId: value.missionId || `${channelId}:${crypto.randomUUID()}`,
+    intentHash: value.intentHash || null,
+    ownerId: value.ownerId || ownerId || null,
+    leaseEpoch: Number.isInteger(value.leaseEpoch) && value.leaseEpoch > 0 ? value.leaseEpoch : 1,
+    scope: value.scope || null,
+    nonGoals: Array.isArray(value.nonGoals) ? value.nonGoals : [],
+    acceptance: Array.isArray(value.acceptance) ? value.acceptance : [],
+    status: value.status || "open",
+    checkpoint: value.checkpoint || null,
+    candidateIdentity: value.candidateIdentity || null,
+    predecessor: value.predecessor || null,
+    handoffRef: value.handoffRef || null,
+    createdAt: value.createdAt || now(),
+    updatedAt: now(),
+  };
+}
 
 function writeJsonAtomic(p, value) {
   const dir = path.dirname(p);
@@ -398,6 +438,22 @@ function cmdInit(dir, o) {
   fs.mkdirSync(path.join(channelDir, RECEIPTS_DIR), { recursive: true });
   fs.mkdirSync(path.join(channelDir, SUPERVISOR_DIR), { recursive: true });
 
+  const existingMission = fs.existsSync(missionPath(channelDir)) ? loadMission(channelDir) : null;
+  let requestedMission = null;
+  if (o.missionJson !== undefined) {
+    try {
+      requestedMission = JSON.parse(o.missionJson);
+    } catch {
+      fail("--mission-json must be a JSON object");
+    }
+    if (!requestedMission || typeof requestedMission !== "object" || Array.isArray(requestedMission)) {
+      fail("--mission-json must be a JSON object");
+    }
+  }
+  if (existingMission && requestedMission?.missionId && requestedMission.missionId !== existingMission.missionId) {
+    fail(`mission identity mismatch on re-init (${requestedMission.missionId} != ${existingMission.missionId})`);
+  }
+
   const disableSupervisorJob =
     Object.prototype.hasOwnProperty.call(o, "noSupervisorJob") ||
     process.env.PASEO_TEAM_DISABLE_SUPERVISOR_JOB === "1";
@@ -446,14 +502,22 @@ function cmdInit(dir, o) {
     members,
   };
   writeJsonAtomic(path.join(channelDir, "channel.json"), ch);
+  if (!existingMission) {
+    writeJsonAtomic(missionPath(channelDir), newMission({
+      channelId: ch.channelId,
+      ownerId: members.find((member) => member.role === "lead")?.agentId || null,
+      requested: requestedMission,
+    }));
+  }
   fs.writeFileSync(path.join(channelDir, "rules.md"), RULES_MD);
   console.log(JSON.stringify({
     ok: true,
     channelId: ch.channelId,
     dir: channelDir,
-    members: members.length,
-    state: ch.state,
-    supervisor: ch.supervisor,
+      members: members.length,
+      state: ch.state,
+      mission: loadMission(channelDir),
+      supervisor: ch.supervisor,
   }));
 }
 
@@ -704,10 +768,11 @@ function cmdStatus(ch) {
   const openThreads = [...new Set(msgs.filter((m) => m.kind === "question" || m.kind === "escalate").map((m) => m.threadId))];
   console.log(
     JSON.stringify(
-      {
-        channelId: ch.channelId,
-        state: ch.state,
-        budgets: ch.budgets,
+        {
+          channelId: ch.channelId,
+          state: ch.state,
+          mission: loadMission(ch._dir),
+          budgets: ch.budgets,
         messages: msgs.length,
         members: byMember,
         openThreads,
@@ -720,6 +785,55 @@ function cmdStatus(ch) {
       2
     )
   );
+}
+
+function cmdMission(ch) {
+  const mission = loadMission(ch._dir);
+  if (!mission) fail(`channel ${ch.channelId} has no mission.json`);
+  console.log(JSON.stringify(mission, null, 2));
+}
+
+function cmdCheckpoint(ch, by, raw, candidateIdentity, leaseEpoch) {
+  if (!by) fail("checkpoint requires --by <agentId>");
+  const mission = loadMission(ch._dir);
+  if (!mission) fail(`channel ${ch.channelId} has no mission.json`);
+  if (by !== mission.ownerId && by !== ch.createdBy) fail(`checkpoint denied for ${by}; only current owner or supervisor may write`);
+  if (leaseEpoch !== undefined && Number(leaseEpoch) !== mission.leaseEpoch) fail(`stale lease epoch ${leaseEpoch}; current epoch is ${mission.leaseEpoch}`);
+  let checkpoint;
+  try {
+    checkpoint = JSON.parse(raw || "");
+  } catch {
+    fail("checkpoint requires --json <object>");
+  }
+  if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) fail("checkpoint --json must be an object");
+  const updated = {
+    ...mission,
+    checkpoint,
+    candidateIdentity: candidateIdentity || mission.candidateIdentity || null,
+    updatedAt: now(),
+  };
+  writeJsonAtomic(missionPath(ch._dir), updated);
+  console.log(JSON.stringify({ ok: true, mission: updated }, null, 2));
+}
+
+function cmdLease(ch, by, ownerId, handoffRef, predecessor) {
+  if (by !== ch.createdBy) fail(`lease rebind denied for ${by}; only channel supervisor may fence an owner`);
+  if (!ownerId) fail("lease requires --owner <leadId>");
+  if (!handoffRef) fail("lease requires --handoff-ref <ref>");
+  const mission = loadMission(ch._dir);
+  if (!mission) fail(`channel ${ch.channelId} has no mission.json`);
+  const owner = ch.members.find((member) => member.agentId === ownerId && member.role === "lead");
+  if (!owner) fail(`lease owner ${ownerId} must be a channel lead`);
+  const updated = {
+    ...mission,
+    ownerId,
+    leaseEpoch: mission.leaseEpoch + 1,
+    predecessor: predecessor || mission.ownerId || null,
+    handoffRef,
+    updatedAt: now(),
+  };
+  writeJsonAtomic(missionPath(ch._dir), updated);
+  console.log(JSON.stringify({ ok: true, mission: updated }, null, 2));
 }
 
 const ROLE_SCOPE = {
@@ -744,9 +858,12 @@ function cmdHelp(filter) {
     "inbox   <dir> <agentId>            open items you owe a reply to",
     "unread  <dir> <agentId>            inbound addressed to you, not yet read",
     "read    <dir> <agentId> <id...> [--all]",
-    "threads <dir> | pending <dir> | wake <dir> <agentId> | rounds <dir> <agentId>",
-    "status  <dir>",
-    "close   <dir> --by <supervisorAgentId>",
+      "threads <dir> | pending <dir> | wake <dir> <agentId> | rounds <dir> <agentId>",
+      "status  <dir>",
+      "mission <dir>                         read the durable mission lease",
+      "checkpoint <dir> --by <agentId> --json '<object>' [--lease-epoch <n>] [--candidate-identity <id>]",
+      "lease <dir> --by <supervisorId> --owner <leadId> --handoff-ref <ref> [--predecessor <id>]",
+      "close   <dir> --by <supervisorAgentId>",
     "help    [role|command]",
   ];
   const postSchema = [
@@ -890,10 +1007,23 @@ function parseOpts(a) {
     case "rounds":
       cmdRounds(loadChannel(dir), args[0]);
       break;
-    case "status":
-      cmdStatus(loadChannel(dir));
-      break;
-    case "close": {
+      case "status":
+        cmdStatus(loadChannel(dir));
+        break;
+      case "mission":
+        cmdMission(loadChannel(dir));
+        break;
+      case "checkpoint": {
+        const o = parseOpts(args);
+        cmdCheckpoint(loadChannel(dir, { needOpen: true }), o.by, o.json, o.candidateIdentity, o.leaseEpoch);
+        break;
+      }
+      case "lease": {
+        const o = parseOpts(args);
+        cmdLease(loadChannel(dir, { needOpen: true }), o.by, o.owner, o.handoffRef, o.predecessor);
+        break;
+      }
+      case "close": {
       const o = parseOpts(args);
       cmdClose(loadChannel(dir), o.by);
       break;

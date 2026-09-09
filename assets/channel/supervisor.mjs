@@ -3,8 +3,8 @@
  * paseo-team supervisor.mjs — deterministic channel watchdog.
  *
  * It does not create or run an LLM. Each invocation reads the complete durable
- * message log, read receipts, and reminder state, then optionally sends a
- * short interrupting reminder through the Paseo CLI.
+ * message log, read receipts, mission lease and reminder state, then optionally
+ * sends a short reminder to an idle agent through the Paseo CLI.
  *
  * Usage:
  *   node supervisor.mjs <channelDir> [options]
@@ -12,17 +12,19 @@
  * Options:
  *   --dry-run                 Print actions without calling Paseo or writing state
  *   --agents-file <path>      Read paseo agent-list JSON from a fixture/file
- *   --overdue-ms <n>          Open-item age before a running agent is interrupted
+ *   --overdue-ms <n>          Age threshold for open items and stale lease evidence
  *   --cooldown-ms <n>         Minimum time between reminders for the same state
  *   --max-reminders <n>       Attempts for the same state; 0 means unlimited
+ *   --activity-file <path>    Fixture/text source for activity-log checks
+ *   --log-tail <n>            Maximum log entries to inspect for compact markers
  *   --now <ISO>               Override current time (tests)
  *   --paseo-bin <path>        Paseo executable (default: paseo)
  *   --host <host>             Paseo daemon host
  *
- * The normal cron path is intentionally explicit about interruption: it uses
- * `paseo agent send --no-wait`, whose current Paseo semantics replace an active
- * run. It only sends for an idle agent with unread/open work, or a running agent
- * whose open work is older than --overdue-ms.
+ * The normal cron path avoids interruption: `paseo agent send --no-wait` is used
+ * only for idle agents. A running agent with open work is deferred because the
+ * current Paseo semantics may replace its active turn. Compact markers are
+ * evidence-only and never trigger an automatic kill.
  */
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -36,6 +38,9 @@ const DEFAULT_MAX_REMINDERS = 3;
 const RECEIPTS_DIR = "receipts";
 const SUPERVISOR_DIR = "supervisor";
 const REMINDER_STATE_FILE = "reminders.json";
+const HEARTBEAT_STATE_FILE = "heartbeat.json";
+const MISSION_FILE = "mission.json";
+const DEFAULT_LOG_TAIL = 1000;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -185,6 +190,166 @@ function writeReminderState(channelDir, state) {
   writeJsonAtomic(reminderStatePath(channelDir), state);
 }
 
+function missionPath(channelDir) {
+  return path.join(channelDir, MISSION_FILE);
+}
+
+export function loadMission(channelDir) {
+  const file = missionPath(channelDir);
+  if (!fs.existsSync(file)) return null;
+  const mission = readJson(file);
+  if (!mission || typeof mission !== "object" || Array.isArray(mission)) fail("mission.json must contain an object");
+  return mission;
+}
+
+function heartbeatStatePath(channelDir) {
+  return path.join(channelDir, SUPERVISOR_DIR, HEARTBEAT_STATE_FILE);
+}
+
+function loadHeartbeatState(channelDir) {
+  const file = heartbeatStatePath(channelDir);
+  if (!fs.existsSync(file)) return { version: 1, agents: {}, lastAlerts: {} };
+  const value = readJson(file);
+  return {
+    version: 1,
+    agents: value && value.agents && typeof value.agents === "object" ? value.agents : {},
+    lastAlerts: value && value.lastAlerts && typeof value.lastAlerts === "object" ? value.lastAlerts : {},
+  };
+}
+
+function writeHeartbeatState(channelDir, state) {
+  writeJsonAtomic(heartbeatStatePath(channelDir), state);
+}
+
+function readActivityText(options, agentId) {
+  if (options.activityFile) {
+    const raw = fs.readFileSync(path.resolve(options.activityFile), "utf8");
+    try {
+      const value = JSON.parse(raw);
+      if (typeof value === "string") return value;
+      if (value && typeof value === "object" && typeof value[agentId] === "string") return value[agentId];
+      return "";
+    } catch {
+      return raw;
+    }
+  }
+  const args = ["logs", agentId, "--tail", String(options.logTail || DEFAULT_LOG_TAIL)];
+  if (options.host) args.push("--host", options.host);
+  try {
+    return execFileSync(options.paseoBin, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    return null;
+  }
+}
+
+export function readCompactEvidence({ agentId, options, previous = {} }) {
+  const text = readActivityText(options, agentId);
+  if (text === null) {
+    return { agentId, available: false, confidence: "unavailable", markerCount: null, markerDelta: 0, reason: "activity-unavailable" };
+  }
+  const markerCount = (text.match(/\[Compacted\]/g) || []).length;
+  const signature = crypto.createHash("sha256").update(text).digest("hex");
+  const hasBaseline = Number.isInteger(previous.markerCount);
+  const previousCount = hasBaseline ? previous.markerCount : markerCount;
+  return {
+    agentId,
+    available: true,
+    confidence: "partial",
+    markerCount,
+    markerDelta: hasBaseline ? Math.max(0, markerCount - previousCount) : 0,
+    baseline: !hasBaseline,
+    signature,
+    authoritative: false,
+    reason: markerCount > 0 ? "free-text-marker-without-event-id" : "no-marker-observed",
+  };
+}
+
+function alertFingerprint(alert) {
+  return crypto.createHash("sha256").update(JSON.stringify({
+    type: alert.type,
+    agentId: alert.agentId || null,
+    missionId: alert.missionId || null,
+    leaseEpoch: alert.leaseEpoch || null,
+    evidence: alert.evidence || null,
+  })).digest("hex");
+}
+
+export function planHeartbeat({ channel, mission, agents, evidenceByAgent, state, nowMs, staleMs = DEFAULT_OVERDUE_MS }) {
+  const alerts = [];
+  if (!mission) {
+    alerts.push({ type: "ROUTE_ALERT", reason: "MISSION_MISSING", target: channel.createdBy });
+    return alerts;
+  }
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const memberIds = new Set(channel.members.map((member) => member.agentId));
+  if (mission.ownerId && !memberIds.has(mission.ownerId)) {
+    alerts.push({
+      type: "LEASE_FENCE",
+      agentId: mission.ownerId,
+      missionId: mission.missionId,
+      leaseEpoch: mission.leaseEpoch,
+      target: channel.createdBy,
+      evidence: { reason: "owner-not-in-roster" },
+    });
+  }
+  const ownerIds = mission.ownerId
+    ? [mission.ownerId]
+    : channel.members.filter((member) => member.role === "lead").map((member) => member.agentId);
+  for (const agentId of ownerIds) {
+    const agent = agentById.get(agentId);
+    const evidence = evidenceByAgent[agentId];
+    if (!agent || ["missing", "closed", "completed", "error"].includes(agent.status)) {
+      alerts.push({
+        type: "SUCCESSOR_PROPOSAL",
+        agentId,
+        missionId: mission.missionId,
+        leaseEpoch: mission.leaseEpoch,
+        target: channel.createdBy,
+        evidence: { status: agent?.status || "missing", reason: "owner-not-live" },
+      });
+      continue;
+    }
+    const updatedMs = parseIsoMs(mission.updatedAt);
+    if (updatedMs !== null && nowMs - updatedMs >= staleMs) {
+      alerts.push({
+        type: "ROUTE_ALERT",
+        agentId,
+        missionId: mission.missionId,
+        leaseEpoch: mission.leaseEpoch,
+        target: channel.createdBy,
+        evidence: { reason: "LEASE_STALE", ageMs: nowMs - updatedMs, status: agent.status },
+      });
+    }
+    if (evidence?.markerDelta > 0) {
+      const type = evidence.markerCount >= 3 && agent.status !== "running" ? "SUCCESSOR_PROPOSAL" : "CHECKPOINT_REQUEST";
+      alerts.push({
+        type,
+        agentId,
+        missionId: mission.missionId,
+        leaseEpoch: mission.leaseEpoch,
+        target: channel.createdBy,
+        evidence: {
+          reason: evidence.reason,
+          markerCount: evidence.markerCount,
+          markerDelta: evidence.markerDelta,
+          confidence: evidence.confidence,
+          status: agent.status,
+        },
+      });
+    }
+  }
+  return alerts.map((alert) => ({ ...alert, fingerprint: alertFingerprint(alert) }));
+}
+
+function buildAlertPrompt(channelDir, alerts) {
+  return [
+    `Heartbeat alert for channel ${channelDir}.`,
+    "Chỉ xử lý theo evidence; guardian không phán architecture và không tự thay Lead.",
+    ...alerts.map((alert) => `${alert.type}: agent=${alert.agentId || "-"} mission=${alert.missionId || "-"} epoch=${alert.leaseEpoch || "-"} evidence=${JSON.stringify(alert.evidence || { reason: alert.reason })}`),
+    "Nếu cần thay Lead: yêu cầu checkpoint/handoff, fence lease trước, rồi mới đề xuất successor ở safe boundary.",
+  ].join("\n");
+}
+
 export function buildReminderPrompt({ channelDir, unreadCount, openCount, overdueCount }) {
   const parts = [];
   if (unreadCount > 0) parts.push(`${unreadCount} tin nhắn chưa đọc`);
@@ -228,10 +393,10 @@ export function planReminders({
 
   for (const member of channel.members) {
     const agent = agentById.get(member.agentId);
-    const snapshot = inspectRecipient({ channelDir, messages, member, agent, nowMs, overdueMs });
-    const idleNeedsReminder =
-      snapshot.status === "idle" && (snapshot.unread.length > 0 || snapshot.open.length > 0);
-    const runningIsOverdue = snapshot.status === "running" && snapshot.overdue.length > 0;
+      const snapshot = inspectRecipient({ channelDir, messages, member, agent, nowMs, overdueMs });
+      const idleNeedsReminder =
+        snapshot.status === "idle" && (snapshot.unread.length > 0 || snapshot.open.length > 0);
+      const runningHasWork = snapshot.status === "running" && (snapshot.unread.length > 0 || snapshot.open.length > 0);
 
     if (!agent) {
       if (snapshot.unread.length > 0 || snapshot.open.length > 0) {
@@ -239,14 +404,16 @@ export function planReminders({
       }
       continue;
     }
-    if (!idleNeedsReminder && !runningIsOverdue) {
-      if (snapshot.status === "running" && (snapshot.unread.length > 0 || snapshot.open.length > 0)) {
-        deferred.push({ ...snapshot, reason: "running-before-overdue" });
-      } else if (snapshot.unread.length > 0 || snapshot.open.length > 0) {
-        skipped.push({ ...snapshot, reason: `status-${snapshot.status}` });
+      if (runningHasWork) {
+        deferred.push({ ...snapshot, reason: "running-no-interrupt" });
+        continue;
       }
-      continue;
-    }
+      if (!idleNeedsReminder) {
+        if (snapshot.unread.length > 0 || snapshot.open.length > 0) {
+          skipped.push({ ...snapshot, reason: `status-${snapshot.status}` });
+        }
+        continue;
+      }
 
     const signature = stateFingerprint(snapshot);
     const previous = state.agents[member.agentId];
@@ -266,13 +433,13 @@ export function planReminders({
       ...snapshot,
       signature,
       attempts,
-      prompt: buildReminderPrompt({
+        prompt: buildReminderPrompt({
         channelDir,
         unreadCount: snapshot.unread.length,
         openCount: snapshot.open.length,
         overdueCount: snapshot.overdue.length,
-      }),
-      mode: runningIsOverdue ? "interrupt-running" : "wake-idle",
+        }),
+        mode: "wake-idle",
     });
   }
 
@@ -336,9 +503,11 @@ function parseArgs(argv) {
     dryRun: false,
     agentsFile: null,
     overdueMs: DEFAULT_OVERDUE_MS,
-    cooldownMs: DEFAULT_COOLDOWN_MS,
-    maxReminders: DEFAULT_MAX_REMINDERS,
-    nowMs: Date.now(),
+      cooldownMs: DEFAULT_COOLDOWN_MS,
+      maxReminders: DEFAULT_MAX_REMINDERS,
+      activityFile: null,
+      logTail: DEFAULT_LOG_TAIL,
+      nowMs: Date.now(),
     paseoBin: process.env.PASEO_BIN || "paseo",
     host: process.env.PASEO_HOST || null,
   };
@@ -346,7 +515,9 @@ function parseArgs(argv) {
     ["--agents-file", "agentsFile"],
     ["--overdue-ms", "overdueMs"],
     ["--cooldown-ms", "cooldownMs"],
-    ["--max-reminders", "maxReminders"],
+      ["--max-reminders", "maxReminders"],
+      ["--activity-file", "activityFile"],
+      ["--log-tail", "logTail"],
     ["--now", "now"],
     ["--paseo-bin", "paseoBin"],
     ["--host", "host"],
@@ -363,7 +534,8 @@ function parseArgs(argv) {
     const raw = argv[++index];
     if (key === "overdueMs") options[key] = parsePositiveNumber(raw, flag);
     else if (key === "cooldownMs") options[key] = parsePositiveNumber(raw, flag);
-    else if (key === "maxReminders") options[key] = parsePositiveNumber(raw, flag);
+      else if (key === "maxReminders") options[key] = parsePositiveNumber(raw, flag);
+      else if (key === "logTail") options[key] = parsePositiveNumber(raw, flag, { allowZero: false });
     else if (key === "now") {
       const parsed = Date.parse(raw);
       if (!Number.isFinite(parsed)) fail("--now must be an ISO timestamp");
@@ -378,6 +550,76 @@ export function runSupervisor(options) {
   const messages = listMessages(channel._dir);
   const agents = loadAgents(options);
   const state = loadReminderState(channel._dir);
+  const mission = loadMission(channel._dir);
+  const heartbeatState = loadHeartbeatState(channel._dir);
+  const evidenceByAgent = {};
+  if (mission) {
+    const leadIds = mission.ownerId
+      ? [mission.ownerId]
+      : channel.members.filter((member) => member.role === "lead").map((member) => member.agentId);
+    for (const agentId of leadIds) {
+      evidenceByAgent[agentId] = readCompactEvidence({
+        agentId,
+        options,
+        previous: heartbeatState.agents[agentId],
+      });
+    }
+  }
+  const heartbeatAlerts = mission
+    ? planHeartbeat({
+        channel,
+        mission,
+        agents,
+        evidenceByAgent,
+        state: heartbeatState,
+        nowMs: options.nowMs,
+        staleMs: options.overdueMs,
+      })
+    : [];
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const heartbeatDelivery = [];
+  const nextHeartbeatState = {
+    ...heartbeatState,
+    agents: Object.fromEntries(Object.entries(evidenceByAgent).map(([agentId, evidence]) => [
+      agentId,
+      { ...evidence, checkedAt: new Date(options.nowMs).toISOString() },
+    ])),
+  };
+  const alertsByTarget = new Map();
+  for (const alert of heartbeatAlerts) {
+    const target = alert.target || channel.createdBy;
+    if (!alertsByTarget.has(target)) alertsByTarget.set(target, []);
+    alertsByTarget.get(target).push(alert);
+  }
+  for (const [target, alerts] of alertsByTarget) {
+    const uniqueAlerts = alerts.filter((alert) => heartbeatState.lastAlerts[alert.fingerprint] !== alert.fingerprint);
+    if (uniqueAlerts.length === 0) {
+      heartbeatDelivery.push({ target, status: "suppressed", reason: "same-evidence" });
+      continue;
+    }
+    const targetAgent = agentById.get(target);
+    const delivery = {
+      target,
+      alertTypes: uniqueAlerts.map((alert) => alert.type),
+      status: targetAgent?.status === "idle" ? "pending" : "deferred-running-or-missing",
+      alerts: uniqueAlerts,
+    };
+    if (!options.dryRun && targetAgent?.status === "idle") {
+      try {
+        delivery.paseoOutput = sendReminder(options, {
+          agentId: target,
+          prompt: buildAlertPrompt(channel._dir, uniqueAlerts),
+        });
+        delivery.status = "sent";
+      } catch (error) {
+        delivery.status = "failed";
+        delivery.error = error instanceof Error ? error.message : String(error);
+      }
+    }
+    for (const alert of uniqueAlerts) nextHeartbeatState.lastAlerts[alert.fingerprint] = alert.fingerprint;
+    heartbeatDelivery.push(delivery);
+  }
+  if (!options.dryRun && mission) writeHeartbeatState(channel._dir, nextHeartbeatState);
   const plan = planReminders({
     channel,
     messages,
@@ -394,8 +636,21 @@ export function runSupervisor(options) {
     dryRun: options.dryRun,
     channelId: channel.channelId,
     channelDir: channel._dir,
-    channelState: channel.state,
-    now: new Date(options.nowMs).toISOString(),
+      channelState: channel.state,
+      mission: mission
+        ? {
+            missionId: mission.missionId,
+            ownerId: mission.ownerId,
+            leaseEpoch: mission.leaseEpoch,
+            updatedAt: mission.updatedAt,
+          }
+        : null,
+      heartbeat: {
+        evidence: evidenceByAgent,
+        alerts: heartbeatAlerts,
+        delivery: heartbeatDelivery,
+      },
+      now: new Date(options.nowMs).toISOString(),
     messages: messages.length,
     actions: [],
     deferred: plan.deferred.map((item) => ({

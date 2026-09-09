@@ -26,7 +26,7 @@ const members = [
   { agentId: "reviewer", role: "reviewer", parent: "lead" },
   { agentId: "done", role: "peer", parent: "lead" },
 ];
-const channel = { channelId: "watchdog-test", state: "open", members };
+const channel = { channelId: "watchdog-test", state: "open", createdBy: "sup", members };
 const messages = [
   {
     id: "m-lead",
@@ -124,9 +124,9 @@ const initial = planReminders({
   cooldownMs: 15 * 60_000,
   maxReminders: 3,
 });
-check("running overdue lead is interrupt action", initial.actions.some((x) => x.agentId === "lead" && x.mode === "interrupt-running"));
+check("running overdue lead is deferred without interrupt", initial.deferred.some((x) => x.agentId === "lead" && x.reason === "running-no-interrupt"));
 check("idle peer is reminded even after read but before answer", initial.actions.some((x) => x.agentId === "peer" && x.mode === "wake-idle"));
-check("running fresh reviewer is deferred", initial.deferred.some((x) => x.agentId === "reviewer" && x.reason === "running-before-overdue"));
+check("running fresh reviewer is deferred", initial.deferred.some((x) => x.agentId === "reviewer" && x.reason === "running-no-interrupt"));
 check("completed agent is not reminded", initial.skipped.some((x) => x.agentId === "done" && x.reason === "status-completed"));
 check("prompt contains unread wording and read receipt instruction", /tin nhắn chưa đọc/.test(buildReminderPrompt({
   channelDir: CHANNEL_DIR,
@@ -154,12 +154,45 @@ const runOptions = {
 };
 const sent = runSupervisor(runOptions);
 check("real supervisor run succeeds with fake Paseo", sent.ok === true);
-check("two reminders were sent", sent.actions.length === 2 && sent.actions.every((x) => x.sent === true));
-check("send command was invoked once per target", fs.readFileSync(SEND_LOG, "utf8").trim().split("\n").length === 2);
+check("only idle peer reminder was sent", sent.actions.length === 1 && sent.actions.every((x) => x.sent === true && x.agentId === "peer"));
+check("send command was not used to interrupt running lead", fs.readFileSync(SEND_LOG, "utf8").trim().split("\n").length === 1);
 check("reminder state is durable", fs.existsSync(path.join(CHANNEL_DIR, "supervisor", "reminders.json")));
 
 const again = runSupervisor(runOptions);
-check("cooldown suppresses duplicate reminders", again.actions.length === 0 && again.skipped.filter((x) => x.reason === "cooldown").length === 2);
+check("cooldown suppresses duplicate reminders", again.actions.length === 0 && again.skipped.filter((x) => x.reason === "cooldown").length === 1);
+
+// Mission/heartbeat evidence is deliberately conservative: compact markers are
+// observations, not an authoritative counter or an auto-kill command.
+const ACTIVITY_FILE = path.join(TMP, "activity.json");
+fs.writeFileSync(
+  path.join(CHANNEL_DIR, "mission.json"),
+  JSON.stringify({
+    schemaVersion: 1,
+    missionId: "mission-1",
+    intentHash: "intent-1",
+    ownerId: "lead",
+    leaseEpoch: 1,
+    scope: ["src/**"],
+    nonGoals: ["rewrite"],
+    acceptance: ["tests"],
+    status: "open",
+    checkpoint: { milestone: "scout" },
+    updatedAt: new Date(NOW).toISOString(),
+  }, null, 2),
+);
+fs.writeFileSync(ACTIVITY_FILE, JSON.stringify({ lead: "[Compacted]\n" }));
+const baseline = runSupervisor({ ...runOptions, activityFile: ACTIVITY_FILE, dryRun: false });
+check("first compact scan establishes a baseline", baseline.heartbeat.alerts.length === 0 && baseline.heartbeat.evidence.lead.baseline === true);
+fs.writeFileSync(ACTIVITY_FILE, JSON.stringify({ lead: "[Compacted]\n[Compacted]\n" }));
+const heartbeatOne = runSupervisor({ ...runOptions, activityFile: ACTIVITY_FILE, dryRun: true });
+check("heartbeat reads compact marker evidence", heartbeatOne.heartbeat.evidence.lead.markerCount === 2);
+check("two compact markers request checkpoint, not replacement", heartbeatOne.heartbeat.alerts.some((x) => x.type === "CHECKPOINT_REQUEST"));
+
+fs.writeFileSync(ACTIVITY_FILE, JSON.stringify({ lead: "[Compacted]\n[Compacted]\n[Compacted]\n" }));
+const idleAgents = JSON.parse(fs.readFileSync(AGENTS_FILE, "utf8")).map((agent) => agent.id === "lead" ? { ...agent, status: "idle" } : agent);
+fs.writeFileSync(AGENTS_FILE, JSON.stringify(idleAgents, null, 2));
+const heartbeatTwo = runSupervisor({ ...runOptions, activityFile: ACTIVITY_FILE, dryRun: true });
+check("third observed marker proposes successor only at safe idle state", heartbeatTwo.heartbeat.alerts.some((x) => x.type === "SUCCESSOR_PROPOSAL") && heartbeatTwo.heartbeat.alerts.every((x) => x.type !== "AUTO_KILL"));
 
 if (previousEnv === undefined) delete process.env.SEND_LOG;
 else process.env.SEND_LOG = previousEnv;

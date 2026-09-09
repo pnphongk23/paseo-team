@@ -88,9 +88,11 @@ const created = run([
 const firstCrontab = fs.readFileSync(CRONTAB_FILE, "utf8");
 const marker = created.supervisor.marker;
 check("init enables global supervisor job by default", created.supervisor.enabled === true);
-check("channel is outside project directory", created.dir === expectedDir && !fs.existsSync(path.join(PROJECT_DIR, ".team")));
-check("channel records global storage identity", created.supervisor.cadence === "*/2 * * * *" && JSON.parse(fs.readFileSync(path.join(expectedDir, "channel.json"), "utf8")).workspaceId === "ws-123");
-check("crontab contains the global channel job", firstCrontab.includes(marker) && firstCrontab.includes(expectedDir) && firstCrontab.includes("*/2 * * * *"));
+  check("channel is outside project directory", created.dir === expectedDir && !fs.existsSync(path.join(PROJECT_DIR, ".team")));
+  check("channel records global storage identity", created.supervisor.cadence === "*/10 * * * *" && JSON.parse(fs.readFileSync(path.join(expectedDir, "channel.json"), "utf8")).workspaceId === "ws-123");
+  const mission = JSON.parse(fs.readFileSync(path.join(expectedDir, "mission.json"), "utf8"));
+  check("global init writes durable mission lease", mission.ownerId === "lead" && mission.leaseEpoch === 1);
+check("crontab contains the global channel job", firstCrontab.includes(marker) && firstCrontab.includes(expectedDir) && firstCrontab.includes("*/10 * * * *"));
 check("cron command is a plain node supervisor", firstCrontab.includes("supervisor.mjs") && firstCrontab.includes("/test/bin/paseo"));
 
 const second = run([
@@ -106,8 +108,9 @@ const second = run([
   "--paseo-bin",
   "/test/bin/paseo",
 ]);
-const duplicateCrontab = fs.readFileSync(CRONTAB_FILE, "utf8");
-check("global re-init is idempotent", second.dir === expectedDir && duplicateCrontab.split(marker).length - 1 === 1);
+  const duplicateCrontab = fs.readFileSync(CRONTAB_FILE, "utf8");
+  check("global re-init is idempotent", second.dir === expectedDir && duplicateCrontab.split(marker).length - 1 === 1);
+  check("global re-init preserves mission lease", JSON.parse(fs.readFileSync(path.join(expectedDir, "mission.json"), "utf8")).missionId === mission.missionId);
 
 const closed = run(["close", expectedDir, "--by", "sup"]);
 const finalCrontab = fs.readFileSync(CRONTAB_FILE, "utf8");

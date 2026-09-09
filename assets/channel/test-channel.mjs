@@ -51,10 +51,25 @@ const id = (r) => r.out?.id;
 fs.mkdirSync(CH, { recursive: true });
 {
   const r = run(["init", CH, "--channel-id", "team-demo", "--by", "cv-1", "--members", JSON.stringify(MEMBERS), "--no-supervisor-job"]);
-  check("init ok", r.code === 0 && r.out.ok === true, JSON.stringify(r.out));
-  check("rules.md written", fs.existsSync(path.join(CH, "rules.md")));
-  check("channel.json state open", JSON.parse(fs.readFileSync(path.join(CH, "channel.json"), "utf8")).state === "open");
-}
+    check("init ok", r.code === 0 && r.out.ok === true, JSON.stringify(r.out));
+    check("rules.md written", fs.existsSync(path.join(CH, "rules.md")));
+    check("channel.json state open", JSON.parse(fs.readFileSync(path.join(CH, "channel.json"), "utf8")).state === "open");
+    check("mission lease written", fs.existsSync(path.join(CH, "mission.json")) && r.out.mission?.ownerId === "tq-a");
+    const checkpoint = run(["checkpoint", CH, "--by", "tq-a", "--json", JSON.stringify({ milestone: "briefed", next: "scout" }), "--candidate-identity", "wip-1"]);
+    check("lead can persist checkpoint", checkpoint.code === 0 && checkpoint.out.mission?.checkpoint?.milestone === "briefed");
+    const deniedCheckpoint = run(["checkpoint", CH, "--by", "tq-b", "--json", JSON.stringify({ milestone: "spoof" })]);
+    check("non-owner cannot persist checkpoint", deniedCheckpoint.code !== 0);
+    const lease = run(["lease", CH, "--by", "cv-1", "--owner", "tq-b", "--handoff-ref", "handoff-1", "--predecessor", "tq-a"]);
+    check("supervisor can fence and rebind lease", lease.code === 0 && lease.out.mission?.ownerId === "tq-b" && lease.out.mission?.leaseEpoch === 2);
+    const staleCheckpoint = run(["checkpoint", CH, "--by", "tq-a", "--lease-epoch", "1", "--json", JSON.stringify({ milestone: "stale" })]);
+    check("fenced owner cannot checkpoint", staleCheckpoint.code !== 0);
+    const successorCheckpoint = run(["checkpoint", CH, "--by", "tq-b", "--lease-epoch", "2", "--json", JSON.stringify({ milestone: "handoff-read" })]);
+    check("successor can checkpoint current lease", successorCheckpoint.code === 0 && successorCheckpoint.out.mission?.checkpoint?.milestone === "handoff-read");
+    const beforeReinit = JSON.parse(fs.readFileSync(path.join(CH, "mission.json"), "utf8"));
+    const reinit = run(["init", CH, "--channel-id", "team-demo", "--by", "cv-1", "--members", JSON.stringify(MEMBERS), "--no-supervisor-job"]);
+    const afterReinit = JSON.parse(fs.readFileSync(path.join(CH, "mission.json"), "utf8"));
+    check("re-init preserves mission identity, epoch and checkpoint", reinit.code === 0 && afterReinit.missionId === beforeReinit.missionId && afterReinit.leaseEpoch === 2 && afterReinit.checkpoint?.milestone === "handoff-read");
+  }
 
 // 2. permission matrix — every edge of the spec
 const matrix = [
