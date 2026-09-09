@@ -19,14 +19,14 @@ General Lead (Outcome owner duy nhất; decompose, plan, execute/delegate)
 Independent sentinel/heartbeat ── evidence-only alert ──► Code Vương
 ```
 
-Chi tiết tham chiếu bắt buộc tại `references/`:
-- [decision-authority.md](references/decision-authority.md) — Bậc thang tự quyết C1/C2/C3 & self-answerable test
-- [briefing-contracts.md](references/briefing-contracts.md) — Canonical role contracts, personas, brief layers
-- [review-scoring.md](references/review-scoring.md) — Chấm điểm S/I/U & ngân sách review độc lập
-- [channel-operations.md](references/channel-operations.md) — Team Channel & supervisor watchdog
-- [failure-handling.md](references/failure-handling.md) — Xử lý lỗi, khôi phục, Better-SLP & self-learning
+Đọc reference theo nhu cầu, không load tất cả mặc định:
+- [decision-authority.md](references/decision-authority.md) — khi gặp C2/C3 hoặc cần self-answerable test
+- [briefing-contracts.md](references/briefing-contracts.md) — khi tạo/cập nhật role brief
+- [review-scoring.md](references/review-scoring.md) — khi budget hoặc chạy review
+- [channel-operations.md](references/channel-operations.md) — chỉ khi mở Team Channel/watchdog
+- [failure-handling.md](references/failure-handling.md) — chỉ khi có failure, recovery hoặc non-convergence
 
-Prompt construction: Bắt buộc dùng `node assets/brief/brief.mjs` để tạo prompt. Không tự chép role rules thủ công.
+Prompt construction: Bắt buộc dùng `node assets/brief/brief.mjs` để tạo prompt. Brief sinh ra phải đủ cho công việc thường lệ; skill path chỉ là fallback khi contract mơ hồ. Không tự chép role rules thủ công.
 
 ---
 
@@ -61,7 +61,7 @@ Mọi task trong `/paseo-team` đều phải tuân thủ nghiêm ngặt 4 cổng
 - **Trình tự thực thi**:
   1. *Bounded Scouting*: Khảo sát codebase, ghi nhận facts thực tế, đánh dấu `Unresolved` nếu thiếu bằng chứng.
   2. *Publish PLAN_DRAFT*: Nêu rõ goal, approach, non-goals, ownership, acceptance evidence, risks, và simplest alternative.
-  3. *Launch Planning Reviewer*: Khởi tạo Planning Reviewer độc lập (`brief.mjs --role planning-reviewer`) để nhận `PLAN_REFLECTION` và $\le 5$ câu hỏi `CHALLENGE`.
+  3. *Launch Planning Reviewer*: Khởi tạo Planning Reviewer độc lập (`brief.mjs --role planning-reviewer`) để nhận `PLAN_REFLECTION` và $\le 3$ câu hỏi `CHALLENGE`.
   4. *Finalize*: Cập nhật thành `PLAN_FINAL`. Chỉ được bắt đầu triển khai code/docs sau khi nhận được `READY_FOR_WORK`.
 - **Nghiêm cấm**: Tuyệt đối không nhảy thẳng vào sửa file / implementation khi chưa vượt qua Pre-plan Gate này.
 
@@ -76,7 +76,7 @@ Mọi task trong `/paseo-team` đều phải tuân thủ nghiêm ngặt 4 cổng
 - **Quy trình chuẩn**:
   1. *Freeze Candidate*: Đóng băng toàn bộ candidate surface thành `Candidate Identity` bất biến (SHA256).
   2. *Score Budget*: Chấm điểm $S, I, U \implies R = S + I + U$ theo `review-scoring.md` và gửi xác nhận hành chính cho Code Vương.
-  3. *Launch Reviewers*: Khởi tạo Reviewer(s) độc lập với fresh context, quyền read-only, khai báo rõ `owns`, `excludes`, `evidence`.
+  3. *Launch Reviewers*: Khởi tạo Reviewer(s) độc lập với fresh context, quyền read-only, khai báo rõ `owns`, `excludes`, `evidence`. Mọi candidate có tối thiểu một reviewer nhẹ; chọn profile review chi phí thấp theo `review-scoring.md`, chỉ nâng cấp model/lens khi impact hoặc uncertainty đòi hỏi.
   4. *Resolve Findings*: Phân loại `BLOCKER`, `REQUIRED`, `NIT`, `FUTURE`. Bắt buộc fix toàn bộ `BLOCKER` và `REQUIRED`. Nếu có chỉnh sửa file, candidate cũ bị hủy, phải cấp candidate identity mới và re-review.
   5. *Convergence*: Chỉ handoff lên Code Vương khi toàn bộ Review lenses đều pass.
 
