@@ -16,14 +16,31 @@ assert.match(lead, /Role: lead/);
 assert.match(lead, /a Lead/);
 assert.match(lead, /[Oo]wn FEAT-015/);
 assert.match(lead, /Task: coordinate settings work/);
-assert.match(lead, /PREPLAN:/);
-assert.match(lead, /YOU MUST NEVER self-review/);
+  assert.match(lead, /PREPLAN:/);
+  assert.match(lead, /Delegation is the default/);
+  assert.match(lead, /direct implementation is valid/);
+  assert.match(lead, /Specialist Lead/);
+  assert.match(lead, /Parent Lead: none/);
+  assert.match(lead, /YOU MUST NEVER self-review/);
 assert.doesNotMatch(lead, /You may implement directly/);
 assert.doesNotMatch(lead, /PLAN ADDENDUM|REVIEW ADDENDUM/);
 assert.doesNotMatch(lead, /Acceptance \+ evidence|Checks\/commands|PACKET/);
 assert.doesNotMatch(lead, /Read and follow this skill/);
 assert.match(lead, /CAP: PLAN_DRAFT\/PLAN_FINAL <=600 words/);
-assert.ok(lead.length <= 1600, `lead prompt too large: ${lead.length} chars`);
+assert.match(lead, /ROLE ROUTING: General Lead owns the outcome and boundary and runs the Lead Delegation Gate/);
+assert.match(lead, /Specialist Lead handles open plan\/architecture or multi-worker domain coordination/);
+assert.match(lead, /Open planning -> one Planning Lead/);
+assert.match(lead, />=2 domains\/streams/);
+assert.match(lead, /Review a logical candidate, not each Worker by default/);
+assert.match(lead, /LEAD DELEGATION: Run the gate before fan-out/);
+assert.match(lead, /Normal Leads work\/delegate\/review in-slice but never create Leads/);
+assert.match(lead, /One specified packet -> Worker/);
+assert.match(lead, /otherwise General Lead direct/);
+assert.match(lead, /PASEO PREREQUISITE:/);
+assert.match(lead, /read the full `\/paseo` skill/);
+assert.match(lead, /call `list_profiles`/);
+assert.match(lead, /`provider\/model`/);
+assert.ok(lead.length <= 2600, `lead prompt too large: ${lead.length} chars`);
 
 const leadPlan = buildBrief({
   role: "lead", stage: "plan", persona: "Chu Du", owner: "FEAT-015",
@@ -33,8 +50,19 @@ const leadReview = buildBrief({
   role: "lead", stage: "review", persona: "Chu Du", owner: "FEAT-015",
   task: "coordinate settings work", workspaceId: "wks-test",
 });
-assert.ok(leadPlan.length <= 1800, `lead plan prompt too large: ${leadPlan.length} chars`);
-assert.ok(leadReview.length <= 1950, `lead review prompt too large: ${leadReview.length} chars`);
+  assert.ok(leadPlan.length <= 2400, `lead plan prompt too large: ${leadPlan.length} chars`);
+  assert.ok(leadReview.length <= 2450, `lead review prompt too large: ${leadReview.length} chars`);
+
+  const specialistLead = buildBrief({
+    role: "lead", stage: "init", persona: "Gia Cat Luong", owner: "FEAT-015/settings",
+    task: "own the bounded settings slice under General Lead lead-1",
+    workspaceId: "wks-test", parentAgentId: "lead-1",
+  });
+  assert.match(specialistLead, /Specialist Lead/);
+  assert.match(specialistLead, /Parent Lead: lead-1/);
+  assert.match(specialistLead, /Normal Leads work\/delegate\/review in-slice but never create Leads/);
+  assert.match(specialistLead, /no child creates a Lead/);
+  assert.doesNotMatch(specialistLead, /Parent Lead: none/);
 
 const worker = buildBrief({
   role: "worker",
@@ -56,7 +84,7 @@ assert.match(worker, /TASK_TEACH_BACK/);
 assert.match(worker, /PROCEED immediately/);
 assert.match(worker, /Owned files\/subtask: docs\/prototype\/screens\/settings\.html/);
 assert.match(worker, /Acceptance \+ evidence: toggle is visible/);
-assert.match(worker, /at most 8 lines/);
+  assert.match(worker, /at most 4 lines/);
 assert.ok(worker.length <= 1600, `worker prompt too large: ${worker.length} chars`);
 
 const reviewer = buildBrief({
@@ -76,9 +104,33 @@ const reviewer = buildBrief({
 assert.match(reviewer, /Role: reviewer/);
 assert.match(reviewer, /Own only this lens: correctness/);
 assert.match(reviewer, /Candidate identity: diff-1/);
-assert.match(reviewer, /VERDICT: CLEAR\|CHANGES_REQUIRED\|BLOCKED/);
-assert.match(reviewer, /Do not receive the implementer's verdict/);
+  assert.match(reviewer, /VERDICT: CLEAR\|CHANGES_REQUIRED\|BLOCKED/);
+  assert.match(reviewer, /Do not receive the implementer's verdict/);
+  assert.match(reviewer, /Never edit files or spawn agents/);
+  assert.doesNotMatch(reviewer, /bounded edit/i);
+assert.doesNotMatch(reviewer, /Supervisor Compliance|exactly two fresh, blind/i);
 assert.ok(reviewer.length <= 1600, `reviewer prompt too large: ${reviewer.length} chars`);
+
+const supervisorReviewer = buildBrief({
+  role: "reviewer",
+  stage: "supervisor",
+  owner: "supervisor cv-1",
+  task: "audit supervisor attention compliance",
+  workspaceId: "wks-test",
+  parentAgentId: "lead-1",
+  candidate: "activity-sha256:abc",
+  lensOwns: "supervisor compliance",
+  lensExcludes: "technical correctness",
+  lensEvidence: "frozen raw transcript, channel and watchdog records",
+  acceptance: "two independent CLEAR verdicts",
+  checks: "inspect exact activity identity",
+});
+assert.match(supervisorReviewer, /one of exactly two blind reviewers/);
+assert.match(supervisorReviewer, /ROLE_BOUNDARY, EVENT_FIRST, ATTENTION_COVERAGE/);
+assert.match(supervisorReviewer, /CLEAR\|VIOLATION\|INSUFFICIENT_EVIDENCE/);
+assert.doesNotMatch(supervisorReviewer, /technical candidate|raw diff|raw artifacts|implementer's verdict/i);
+assert.match(supervisorReviewer, /Frozen raw packet identity: activity-sha256:abc/);
+assert.ok(supervisorReviewer.length <= 2350, `supervisor reviewer prompt too large: ${supervisorReviewer.length} chars`);
 
 const planningReviewer = buildBrief({
   role: "planning-reviewer",
@@ -103,8 +155,9 @@ const channel = buildBrief({
   channelDir: "/tmp/channel-1",
   agentId: "lead-1",
 });
-assert.match(channel, /channel channel-1/);
-assert.match(channel, /\/tmp\/channel-1\/rules\.md/);
+assert.match(channel, /[Cc]hannel channel-1/);
+assert.match(channel, /Read rules\.md once/);
+assert.match(channel, /sync \/tmp\/channel-1 lead-1/);
 assert.doesNotMatch(channel, /\{\{[a-zA-Z0-9_-]+\}\}/);
 assert.ok(channel.length <= 2700, `lead channel prompt too large: ${channel.length} chars`);
 assert.throws(() => buildBrief({

@@ -16,6 +16,7 @@
  *   node channel.mjs post     <dir> '<messageJson>'          # or '-' to read from stdin
  *   node channel.mjs inbox    <dir> <agentId>
  *   node channel.mjs unread   <dir> <agentId>
+ *   node channel.mjs sync     <dir> <agentId>
  *   node channel.mjs read     <dir> <agentId> <messageId...> [--all]
  *   node channel.mjs threads  <dir>
  *   node channel.mjs rounds   <dir> <agentId>
@@ -80,7 +81,7 @@ Every \`to\` address is an agentId, a role token ("supervisor"|"lead"|"peer"|"re
 Escalation: kind escalate is supervisor-only.
 Loop safety: maxRoundsPerMember substantive posts, maxThreadsPerMember threads,
 maxMessages total. Settle each thread at most once (inbox shows what you owe).
-Read state is per-recipient in receipts/; use unread/read for read receipts.
+Read state is per-recipient in receipts/; use sync for the turn snapshot and read for receipts.
 The deterministic supervisor job runs every 10 minutes and is removed when the channel closes.
   Never edit messages/ or mission.json by hand; always post through channel.mjs, and use mission/checkpoint/lease commands for durable lease state.
 `;
@@ -142,6 +143,112 @@ function writeJsonAtomic(p, value) {
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function createFunctionalManifest(rootDir, rawFiles) {
+  if (!Array.isArray(rawFiles) || rawFiles.length === 0) fail("manifest requires at least one file");
+  const files = [...new Set(rawFiles)]
+    .filter((file) => path.basename(file) !== ".DS_Store")
+    .map((file) => path.normalize(file))
+    .sort();
+  if (files.length === 0) fail("manifest has no functional files after excluding .DS_Store");
+  const entries = files.map((file) => {
+    if (path.isAbsolute(file) || file === ".." || file.startsWith(`..${path.sep}`)) fail(`manifest path must be relative: ${file}`);
+    const absolute = path.join(rootDir, file);
+    const stat = fs.statSync(absolute);
+    if (!stat.isFile()) fail(`manifest path is not a file: ${file}`);
+    const content = fs.readFileSync(absolute);
+    return { path: file.split(path.sep).join("/"), bytes: content.length, sha256: sha256(content) };
+  });
+  const manifest = { schemaVersion: 1, files: entries };
+  return { ...manifest, digest: sha256(canonicalJson(manifest)) };
+}
+
+function validateFunctionalManifest(manifest) {
+  if (!manifest || manifest.schemaVersion !== 1 || !Array.isArray(manifest.files) || !manifest.digest) {
+    fail("audit requires a schemaVersion=1 functional manifest with digest");
+  }
+  const entries = manifest.files;
+  if (entries.some((entry) => !entry || typeof entry.path !== "string" || entry.path.endsWith("/.DS_Store") || path.basename(entry.path) === ".DS_Store" || !Number.isInteger(entry.bytes) || !/^[a-f0-9]{64}$/.test(entry.sha256))) {
+    fail("functional manifest contains an invalid or excluded entry");
+  }
+  const normalized = entries.map((entry) => ({ path: entry.path, bytes: entry.bytes, sha256: entry.sha256 }));
+  if (canonicalJson(normalized) !== canonicalJson([...normalized].sort((a, b) => a.path.localeCompare(b.path)))) fail("functional manifest entries must be sorted");
+  const expected = sha256(canonicalJson({ schemaVersion: 1, files: normalized }));
+  if (manifest.digest !== expected) fail(`functional manifest digest mismatch (${manifest.digest} != ${expected})`);
+  return { schemaVersion: 1, files: normalized, digest: expected };
+}
+
+function launchSupervisorAudit({ manifest, criteria, reviewers }) {
+  const frozenManifest = validateFunctionalManifest(manifest);
+  if (!criteria || typeof criteria !== "object" || Array.isArray(criteria)) fail("audit criteria must be an object");
+  if (!Array.isArray(reviewers) || reviewers.length !== 2 || new Set(reviewers).size !== 2 || reviewers.some((id) => typeof id !== "string" || !id)) {
+    fail("supervisor audit requires exactly two distinct reviewer IDs");
+  }
+  const criteriaDigest = sha256(canonicalJson(criteria));
+  const invocationDigest = sha256(canonicalJson({ manifestDigest: frozenManifest.digest, criteriaDigest }));
+  return {
+    schemaVersion: 1,
+    state: "AWAITING_SECOND_START",
+    manifest: frozenManifest,
+    manifestDigest: frozenManifest.digest,
+    criteria,
+    criteriaDigest,
+    invocationDigest,
+    reviewers: reviewers.map((id) => ({ id, manifestDigest: frozenManifest.digest, criteriaDigest, started: false })),
+    verdicts: {},
+  };
+}
+
+function auditReviewer(audit, reviewerId) {
+  const reviewer = audit.reviewers.find((item) => item.id === reviewerId);
+  if (!reviewer) fail(`reviewer ${reviewerId} is not part of this audit`);
+  if (reviewer.manifestDigest !== audit.manifestDigest || reviewer.criteriaDigest !== audit.criteriaDigest) fail("reviewer invocation digest mismatch");
+  return reviewer;
+}
+
+function verifyAuditInvocation(audit, o) {
+  if (o.manifestDigest !== audit.manifestDigest || o.criteriaDigest !== audit.criteriaDigest) {
+    fail("invocation is not bound to this audit's manifest and criteria digests");
+  }
+}
+
+function startSupervisorReviewer(audit, reviewerId) {
+  const reviewer = auditReviewer(audit, reviewerId);
+  if (reviewer.started) fail(`reviewer ${reviewerId} already started`);
+  reviewer.started = true;
+  if (audit.reviewers.every((item) => item.started)) audit.state = "READY_FOR_VERDICTS";
+  return audit;
+}
+
+function recordSupervisorVerdict(audit, reviewerId, verdict) {
+  if (!["CLEAR", "VIOLATION", "INSUFFICIENT_EVIDENCE"].includes(verdict)) fail(`invalid supervisor verdict: ${verdict}`);
+  const reviewer = auditReviewer(audit, reviewerId);
+  if (!audit.reviewers.every((item) => item.started)) fail("second reviewer must start before any verdict is exposed");
+  if (audit.verdicts[reviewerId]) fail(`reviewer ${reviewerId} already submitted a verdict`);
+  audit.verdicts[reviewerId] = { verdict, invocationDigest: audit.invocationDigest };
+  return audit;
+}
+
+function mergeSupervisorAudit(audit) {
+  if (!audit.reviewers.every((item) => item.started) || Object.keys(audit.verdicts).length !== 2) {
+    fail("UNRESOLVED: both independent reviewers must start and submit before merge");
+  }
+  const verdicts = audit.reviewers.map((item) => audit.verdicts[item.id]?.verdict);
+  const status = verdicts.every((verdict) => verdict === "CLEAR") ? "CLEAR" : "UNRESOLVED";
+  return { state: status, manifestDigest: audit.manifestDigest, criteriaDigest: audit.criteriaDigest, verdicts };
 }
 
 function resolvePaseoHome(value) {
@@ -316,6 +423,16 @@ function unreadMessages(ch, agentId) {
   );
 }
 
+const messageSummary = (m) => ({
+  id: m.id,
+  ts: m.ts,
+  threadId: m.threadId,
+  from: m.from,
+  fromRole: m.fromRole,
+  kind: m.kind,
+  body: m.body,
+});
+
 function loadChannel(dir, { needOpen = false } = {}) {
   const cp = path.join(dir, "channel.json");
   if (!fs.existsSync(cp)) fail(`no channel at ${dir} (missing channel.json)`);
@@ -384,6 +501,13 @@ const roundsOf = (msgs, agentId) => msgs.filter((m) => m.from === agentId && SUB
 const threadsCreatedBy = (msgs, agentId) =>
   new Set(msgs.filter((m) => m.from === agentId && m.kind === "question" && !m.replyTo).map((m) => m.threadId)).size;
 
+function resolveBudget(raw, previous, fallback, used, option) {
+  const value = raw === undefined ? (previous ?? fallback) : Number(raw);
+  if (!Number.isInteger(value) || value < 1) fail(`--${option} must be a positive integer`);
+  if (value < used) fail(`--${option}=${value} is below existing usage ${used}`);
+  return value;
+}
+
 /**
  * Is message m still awaiting a reply from agentA?
  * m is actionable for A iff: m is question/escalate, A is addressed (by id,
@@ -438,6 +562,22 @@ function cmdInit(dir, o) {
   fs.mkdirSync(path.join(channelDir, RECEIPTS_DIR), { recursive: true });
   fs.mkdirSync(path.join(channelDir, SUPERVISOR_DIR), { recursive: true });
 
+  const channelFile = path.join(channelDir, "channel.json");
+  const existingChannel = fs.existsSync(channelFile) ? loadChannel(channelDir) : null;
+  if (existingChannel?.channelId && existingChannel.channelId !== o.channelId) {
+    fail(`channel identity mismatch on re-init (${o.channelId} != ${existingChannel.channelId})`);
+  }
+  if (existingChannel?.createdBy && existingChannel.createdBy !== o.by) {
+    fail(`only existing supervisor ${existingChannel.createdBy} may re-init this channel`);
+  }
+  const existingMessages = existingChannel ? listMessages(existingChannel) : [];
+  const usedRounds = Math.max(0, ...members.map((member) => roundsOf(existingMessages, member.agentId)));
+  const usedThreads = Math.max(0, ...members.map((member) => threadsCreatedBy(existingMessages, member.agentId)));
+  const budgets = {
+    maxRoundsPerMember: resolveBudget(o.maxRounds, existingChannel?.budgets?.maxRoundsPerMember, 3, usedRounds, "max-rounds"),
+    maxThreadsPerMember: resolveBudget(o.maxThreads, existingChannel?.budgets?.maxThreadsPerMember, 4, usedThreads, "max-threads"),
+    maxMessages: resolveBudget(o.maxMessages, existingChannel?.budgets?.maxMessages, 250, existingMessages.length, "max-messages"),
+  };
   const existingMission = fs.existsSync(missionPath(channelDir)) ? loadMission(channelDir) : null;
   let requestedMission = null;
   if (o.missionJson !== undefined) {
@@ -472,21 +612,18 @@ function cmdInit(dir, o) {
     requireScript: !disableSupervisorJob,
   });
   if (!disableSupervisorJob) installSupervisorJob(job);
-  const ch = {
-    schemaVersion: useGlobalStorage ? 2 : 1,
-    storage: useGlobalStorage ? "paseo-global" : "local",
-    workspaceId,
-    channelId: o.channelId,
-    name: o.name || o.channelId,
-    state: "open",
-    createdAt: now(),
-    createdBy: o.by,
-    budgets: {
-      maxRoundsPerMember: Number(o.maxRounds || 3),
-      maxThreadsPerMember: Number(o.maxThreads || 4),
-      maxMessages: Number(o.maxMessages || 250),
-    },
-    supervisor: {
+    const ch = {
+      schemaVersion: useGlobalStorage ? 2 : 1,
+      storage: useGlobalStorage ? "paseo-global" : "local",
+      workspaceId: workspaceId || existingChannel?.workspaceId || null,
+      channelId: o.channelId,
+      name: o.name || existingChannel?.name || o.channelId,
+      state: "open",
+      createdAt: existingChannel?.createdAt || now(),
+      createdBy: existingChannel?.createdBy || o.by,
+      updatedAt: now(),
+      budgets,
+      supervisor: {
       enabled: !disableSupervisorJob,
       status: disableSupervisorJob ? "disabled" : "active",
       jobId: job.jobId,
@@ -497,11 +634,11 @@ function cmdInit(dir, o) {
       overdueMs: supervisorOptions.overdueMs,
       cooldownMs: supervisorOptions.cooldownMs,
       maxReminders: supervisorOptions.maxReminders,
-      installedAt: disableSupervisorJob ? null : now(),
-    },
-    members,
-  };
-  writeJsonAtomic(path.join(channelDir, "channel.json"), ch);
+        installedAt: disableSupervisorJob ? null : existingChannel?.supervisor?.installedAt || now(),
+      },
+      members,
+    };
+    writeJsonAtomic(channelFile, ch);
   if (!existingMission) {
     writeJsonAtomic(missionPath(channelDir), newMission({
       channelId: ch.channelId,
@@ -511,19 +648,75 @@ function cmdInit(dir, o) {
   }
   fs.writeFileSync(path.join(channelDir, "rules.md"), RULES_MD);
   console.log(JSON.stringify({
-    ok: true,
-    channelId: ch.channelId,
-    dir: channelDir,
+      ok: true,
+      channelId: ch.channelId,
+      dir: channelDir,
       members: members.length,
       state: ch.state,
       mission: loadMission(channelDir),
+      budgets: ch.budgets,
       supervisor: ch.supervisor,
-  }));
+    }));
 }
 
 function cmdPath(o) {
   const info = globalChannelInfo(o);
   console.log(JSON.stringify({ ok: true, ...info }));
+}
+
+function auditFile(ch) {
+  return path.join(ch._dir, SUPERVISOR_DIR, "compliance-audit.json");
+}
+
+function loadAudit(ch) {
+  const file = auditFile(ch);
+  if (!fs.existsSync(file)) fail("no supervisor compliance audit at channel");
+  return readJson(file);
+}
+
+function cmdManifest(rootDir, rawFiles) {
+  console.log(JSON.stringify(createFunctionalManifest(rootDir, rawFiles), null, 2));
+}
+
+function cmdAuditLaunch(ch, o) {
+  let audit;
+  try {
+    audit = launchSupervisorAudit({
+      manifest: JSON.parse(o.manifestJson),
+      criteria: JSON.parse(o.criteriaJson),
+      reviewers: JSON.parse(o.reviewersJson),
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) fail("audit launch JSON is invalid");
+    throw error;
+  }
+  writeJsonAtomic(auditFile(ch), audit);
+  console.log(JSON.stringify({ ok: true, state: audit.state, manifestDigest: audit.manifestDigest, criteriaDigest: audit.criteriaDigest, invocationDigest: audit.invocationDigest }));
+}
+
+function cmdAuditStart(ch, o) {
+  const audit = loadAudit(ch);
+  verifyAuditInvocation(audit, o);
+  startSupervisorReviewer(audit, o.reviewerId);
+  writeJsonAtomic(auditFile(ch), audit);
+  console.log(JSON.stringify({ ok: true, state: audit.state, started: audit.reviewers.filter((item) => item.started).map((item) => item.id) }));
+}
+
+function cmdAuditVerdict(ch, o) {
+  const audit = loadAudit(ch);
+  verifyAuditInvocation(audit, o);
+  recordSupervisorVerdict(audit, o.reviewerId, o.verdict);
+  writeJsonAtomic(auditFile(ch), audit);
+  console.log(JSON.stringify({ ok: true, state: audit.state, verdictCount: Object.keys(audit.verdicts).length }));
+}
+
+function cmdAuditMerge(ch) {
+  const audit = loadAudit(ch);
+  const result = mergeSupervisorAudit(audit);
+  audit.state = result.state;
+  audit.merge = result;
+  writeJsonAtomic(auditFile(ch), audit);
+  console.log(JSON.stringify(result));
 }
 
 function cmdPermit(ch, from, to) {
@@ -653,23 +846,50 @@ function cmdInbox(ch, agentId) {
   const msgs = listMessages(ch);
   const open = msgs
     .filter((m) => isActionable(msgs, m, agentId))
-    .map((m) => ({ id: m.id, ts: m.ts, threadId: m.threadId, from: m.from, fromRole: m.fromRole, kind: m.kind, body: m.body }));
+    .map(messageSummary);
   console.log(JSON.stringify({ agentId, open: open.length, items: open }, null, 2));
 }
 
 function cmdUnread(ch, agentId) {
   const idx = memberIndex(ch);
   if (!idx.has(agentId)) fail(`${agentId} is not a channel member`);
-  const items = unreadMessages(ch, agentId).map((m) => ({
-    id: m.id,
-    ts: m.ts,
-    threadId: m.threadId,
-    from: m.from,
-    fromRole: m.fromRole,
-    kind: m.kind,
-    body: m.body,
-  }));
+  const items = unreadMessages(ch, agentId).map(messageSummary);
   console.log(JSON.stringify({ agentId, unread: items.length, items }, null, 2));
+}
+
+function cmdSync(ch, agentId) {
+  const idx = memberIndex(ch);
+  if (!idx.has(agentId)) fail(`${agentId} is not a channel member`);
+  const msgs = listMessages(ch);
+  const readAt = loadReadReceipt(ch, agentId).readAt;
+  const unread = msgs
+    .filter((m) => isAddressedInbound(m, agentId) && !Object.prototype.hasOwnProperty.call(readAt, m.id))
+    .map(messageSummary);
+  const open = msgs.filter((m) => isActionable(msgs, m, agentId)).map(messageSummary);
+  const substantivePosts = roundsOf(msgs, agentId);
+  const threadsOpened = threadsCreatedBy(msgs, agentId);
+  const closeHint = ch.state === "open" && msgs.length > 0 && ch.members.every(
+    (member) => !msgs.some((m) => isActionable(msgs, m, member.agentId)),
+  )
+    ? "no open items — supervisor may post close"
+    : null;
+  console.log(JSON.stringify({
+    channelId: ch.channelId,
+    state: ch.state,
+    agentId,
+    mission: loadMission(ch._dir),
+    unread: { count: unread.length, items: unread },
+    inbox: { open: open.length, items: open },
+    budget: {
+      substantivePosts,
+      maxRoundsPerMember: ch.budgets.maxRoundsPerMember,
+      threadsOpened,
+      maxThreadsPerMember: ch.budgets.maxThreadsPerMember,
+      exhausted: substantivePosts >= ch.budgets.maxRoundsPerMember,
+    },
+    messages: { total: msgs.length, max: ch.budgets.maxMessages },
+    closeHint,
+  }, null, 2));
 }
 
 function cmdRead(ch, agentId, rawArgs) {
@@ -851,11 +1071,15 @@ function cmdHelp(filter) {
     "",
   ];
   const commands = [
-    "init    [<dir>] --channel-id <id> --workspace-id <ws> --by <supervisorId> --members '<json>'",
-    "path    --channel-id <id> --workspace-id <ws>",
-    "permit  <dir> <fromAgentId> <toAgentId|role|*>",
-    "post    <dir> '<messageJson>'   (or '-' to read stdin)",
-    "inbox   <dir> <agentId>            open items you owe a reply to",
+      "init    [<dir>] --channel-id <id> --workspace-id <ws> --by <supervisorId> --members '<json>'",
+      "path    --channel-id <id> --workspace-id <ws>",
+      "manifest <root> <file...>          deterministic functional manifest/digest (.DS_Store excluded)",
+      "audit-launch <dir> --manifest-json <json> --criteria-json <json> --reviewers-json <json>",
+      "audit-start <dir> --reviewer-id <id> --manifest-digest <d> --criteria-digest <d> | audit-verdict <dir> --reviewer-id <id> --manifest-digest <d> --criteria-digest <d> --verdict <v> | audit-merge <dir>",
+      "permit  <dir> <fromAgentId> <toAgentId|role|*>",
+      "post    <dir> '<messageJson>'   (or '-' to read stdin)",
+      "sync    <dir> <agentId>            mission + unread + inbox + own budget",
+      "inbox   <dir> <agentId>            open items you owe a reply to",
     "unread  <dir> <agentId>            inbound addressed to you, not yet read",
     "read    <dir> <agentId> <id...> [--all]",
       "threads <dir> | pending <dir> | wake <dir> <agentId> | rounds <dir> <agentId>",
@@ -884,12 +1108,11 @@ function cmdHelp(filter) {
     "",
   ];
   const turn = [
-    "One turn (do this each exchange point):",
-    "  1. unread <dir> <yourAgentId>   2. inbox <dir> <yourAgentId>",
-    "  3. answer exactly what you owe (kind answer/ack/eod, set replyTo)",
-    "  4. read <dir> <yourAgentId> <id...>  (mark consumed; does NOT settle)",
-    "  5. post <dir> '<json>'          6. eod when you have nothing more",
-    "  7. status <dir> before finishing; report unread/open items.",
+      "One turn (do this each exchange point):",
+      "  1. sync <dir> <yourAgentId>",
+      "  2. answer exactly what you owe (answer/ack/eod with replyTo) or post one info",
+      "  3. read <dir> <yourAgentId> <id...> (does not settle); do not add eod after a settling answer/ack",
+      "  4. sync once before finishing only when your post may have changed close readiness.",
     "",
   ];
 
@@ -977,9 +1200,24 @@ function parseOpts(a) {
     case "init":
       cmdInit(dir, parseOpts(args));
       break;
-    case "path":
-      cmdPath(parseOpts(args));
-      break;
+      case "path":
+        cmdPath(parseOpts(args));
+        break;
+      case "manifest":
+        cmdManifest(dir, args);
+        break;
+      case "audit-launch":
+        cmdAuditLaunch(loadChannel(dir, { needOpen: true }), parseOpts(args));
+        break;
+      case "audit-start":
+        cmdAuditStart(loadChannel(dir, { needOpen: true }), parseOpts(args));
+        break;
+      case "audit-verdict":
+        cmdAuditVerdict(loadChannel(dir, { needOpen: true }), parseOpts(args));
+        break;
+      case "audit-merge":
+        cmdAuditMerge(loadChannel(dir, { needOpen: true }));
+        break;
     case "permit":
       cmdPermit(loadChannel(dir), args[0], args[1]);
       break;
@@ -991,6 +1229,9 @@ function parseOpts(a) {
       break;
     case "unread":
       cmdUnread(loadChannel(dir), args[0]);
+      break;
+    case "sync":
+      cmdSync(loadChannel(dir), args[0]);
       break;
     case "read":
       cmdRead(loadChannel(dir), args[0], args.slice(1));
@@ -1007,23 +1248,23 @@ function parseOpts(a) {
     case "rounds":
       cmdRounds(loadChannel(dir), args[0]);
       break;
-      case "status":
-        cmdStatus(loadChannel(dir));
-        break;
-      case "mission":
-        cmdMission(loadChannel(dir));
-        break;
-      case "checkpoint": {
-        const o = parseOpts(args);
-        cmdCheckpoint(loadChannel(dir, { needOpen: true }), o.by, o.json, o.candidateIdentity, o.leaseEpoch);
-        break;
-      }
-      case "lease": {
-        const o = parseOpts(args);
-        cmdLease(loadChannel(dir, { needOpen: true }), o.by, o.owner, o.handoffRef, o.predecessor);
-        break;
-      }
-      case "close": {
+    case "status":
+      cmdStatus(loadChannel(dir));
+      break;
+    case "mission":
+      cmdMission(loadChannel(dir));
+      break;
+    case "checkpoint": {
+      const o = parseOpts(args);
+      cmdCheckpoint(loadChannel(dir, { needOpen: true }), o.by, o.json, o.candidateIdentity, o.leaseEpoch);
+      break;
+    }
+    case "lease": {
+      const o = parseOpts(args);
+      cmdLease(loadChannel(dir, { needOpen: true }), o.by, o.owner, o.handoffRef, o.predecessor);
+      break;
+    }
+    case "close": {
       const o = parseOpts(args);
       cmdClose(loadChannel(dir), o.by);
       break;

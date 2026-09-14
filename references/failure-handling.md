@@ -11,8 +11,8 @@ Tài liệu tham chiếu chuẩn cho xử lý lỗi, khôi phục trạng thái,
 | **Code Vương sửa file hoặc tự quyết technical** | **Protocol Failure nghiêm trọng**: Dừng ngay lập tức, disclose với User và route lại toàn bộ công việc cho General Lead; tuyệt đối không mark complete. |
 | **Thiếu profile (`lead`/`peer`) hoặc thiếu công cụ Paseo** | Dừng thực thi, thông báo `BLOCKED_NO_PASEO_TOOLS`; không tự đoán provider/model để tiếp tục. |
 | **Lead / Worker sửa file ngoài mission scope / lease epoch** | Gửi corrective prompt (tối đa 2 lần). Nếu tái diễn: fence lease, đề xuất successor hoặc escalate cho Code Vương / Human; không tự kill turn đang chạy dở. |
-| **Decision Peer / Review Lens lỗi hoặc trả về kết quả rỗng** | Ghi nhận fail, không chấp nhận verdict mù. Nếu có bounded edit thì bắt buộc tạo candidate identity mới và mở fresh review lens; tối đa 1 lần corrective; thay thế bằng lane thành công; không retry vô hạn. |
-| **Review target thay đổi trong lúc review** | Freeze và reopen review với candidate identity mới; reviewer vừa thực hiện sửa đổi không được tính là reviewer độc lập duy nhất của phần vừa sửa. |
+| **Decision Peer / Review Lens lỗi hoặc trả về kết quả rỗng** | Ghi nhận fail, không chấp nhận verdict mù. Mở tối đa một replacement nếu budget còn; không retry vô hạn. Reviewer luôn read-only. |
+| **Review target thay đổi trong lúc review** | Freeze và reopen review với candidate identity mới theo [review-scoring.md](review-scoring.md). Không để reviewer sửa candidate. |
 | **`BLOCKED_NON_CONVERGING` (lặp blocker, phình scope)** | General Lead tự chọn tiếp tục / đổi hướng / dừng nếu quyết định đảo ngược được và trong scope, ghi rõ evidence + cost + rationale rồi announce; Code Vương chỉ route/escalate. Nếu đổi intent/scope, hoặc rủi ro ngoài contract ➔ đề xuất 1 dòng để Human quyết định. |
 | **Compact marker không đủ bằng chứng** | Ghi nhận `COMPACT_EVIDENCE_PARTIAL`, không tự suy đoán counter hay trảm tướng khi thiếu event cursor/ID. |
 | **Hết persona khả dụng (trùng tên)** | Kiểm tra `list_agents`, hỏi User hoặc archive các agent cũ đã hoàn thành. |
@@ -41,14 +41,13 @@ Kèm theo trạng thái phân loại (**Pattern Status**):
 
 Thực hiện định kỳ hằng tuần hoặc sau khi có retrospective quan trọng:
 
-1. **Rà soát luật cũ:** Giữ / thu hẹp / loại bỏ dựa trên bằng chứng thực tế. Mỗi điều khoản cứng phải kèm **Review Trigger** (khi nào thì loại bỏ/nới lỏng).
-   - Watchdog ➔ Loại bỏ khi Paseo CLI có cơ chế `notifyOnFinish` canary pass 100%.
-   - `BLOCKED_NO_SAFE_LANE` ➔ Loại bỏ khi Paseo/provider hỗ trợ enforced read-only container/worktree snapshot.
-   - Decision Peer "never `peer`" ➔ Bỏ khi advisor profile hoàn toàn ổn định.
+  1. **Rà soát luật cũ:** Giữ / thu hẹp / loại bỏ dựa trên bằng chứng thực tế. Mỗi điều khoản cứng phải kèm **Review Trigger** (khi nào thì loại bỏ/nới lỏng).
+     - Watchdog ➔ Chỉ giữ cho lane dài hoặc notification incident; thu hẹp thêm khi `notifyOnFinish` canary pass ổn định.
+     - Reviewer read-only ➔ Chỉ nới lỏng khi tooling bảo toàn candidate identity và independence một cách machine-checkable.
 2. **Byte Budget Discipline:**
    - [`SKILL.md`](../SKILL.md) duy trì mục tiêu $\le 10\text{ KB}$.
    - Áp dụng nguyên tắc: *One fact in one place*.
-   - [`SKILL.md`](../SKILL.md) chỉ giữ Lifecycle Pipeline cốt lõi, toàn bộ chi tiết tham chiếu đặt tại `references/`.
+     - [`SKILL.md`](../SKILL.md) chỉ giữ topology, default workflow và routing; toàn bộ chi tiết nhánh đặt tại `references/`.
    - Kiểm tra dung lượng thường xuyên: `wc -c SKILL.md` và từng file trong `references/` (nguy cơ truncation nếu file $> 24\text{ KB}$).
 3. **Metrics tối thiểu ghi nhận:**
    - Số lần User phải can thiệp thủ công (Human interventions / episode).

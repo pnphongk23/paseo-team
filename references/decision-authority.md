@@ -1,50 +1,42 @@
-# Decision Authority — Ladder & Self-Answerable Test
+# Decision Authority — Ladder & Escalation
 
-Chi tiết hoá Decision Authority Ladder trong SKILL.md. Mọi role (Code Vương, Tướng quân, Lính, Decision Peer, Quân sư, Reviewer) áp dụng cùng bậc thang này khi đứng trước một lựa chọn.
+Use this file only when a role must choose, ask upward, or decide whether it is over-asking. It is the canonical source for C1/C2/C3; lifecycle and review rules live elsewhere.
 
 ## Bậc thang 3 cấp
 
-| Cấp | Hành vi | Ví dụ thực tế |
+| Cấp | Hành vi | Ai sở hữu |
 |---|---|---|
-| **C1 — Tự quyết** | Quyết định và làm ngay; ghi `rationale` ngắn trong báo cáo. | Chọn phương thức lưu trữ (Keychain expect/actual), thứ tự/parallel hoá lane, provider fallback khi hạ tầng lỗi (codex → cursor → pi), review budget, chọn config key theo convention. |
-| **C2 — Tự quyết + announce** | Quyết định, làm, và thông báo ngay (post channel / mention trong report). Quyết định đảo ngược được, đụng artifact chính. | Ghi approval theo mandate đã cấp, mở rộng packet 1 file, đóng WI, thay đổi file ownership nhỏ. |
-| **C3 — Hỏi (human-only)** | Dừng và hỏi user. | Evidence/secret chỉ user có · material scope/intent change · irreversible/risky ngoài contract · non-convergence material. Non-convergence thường trong scope và reversible → chain tự quyết, ghi rationale và announce; không hỏi user.
+| **C1 — Tự quyết** | Chọn và làm ngay; ghi rationale ngắn nếu quyết định ảnh hưởng cách thực thi. | General/Specialist Lead trong boundary; Worker trong packet của mình |
+| **C2 — Tự quyết + announce** | Làm ngay rồi thông báo khi đụng artifact chính nhưng vẫn đảo ngược được. | General/Specialist Lead; Worker chỉ trong write-set được cấp |
+| **C3 — Human-only** | Dừng và hỏi user một lần, luôn kèm recommended default. | Mọi role khi đổi intent/scope vật chất, cần secret/authority của user, hoặc có rủi ro không đảo ngược ngoài contract |
 
-Lưu ý: **tự tin quyết ≠ bịa evidence.** Kỷ luật fail-closed giữ nguyên: không bao giờ claim `verified/shipped` cho thứ chưa verify runtime; ghi `Unresolved`/`Pending-validation` khi chưa có bằng chứng.
+Code Vương chỉ route User I/O, lease và event; không biến C1/C2 technical thành quyết định của mình. Reviewer báo cáo finding, không quyết định thay Lead.
 
-## Self-answerable test (chạy trước mỗi ý định hỏi)
+## Self-answerable test
 
-Trước khi đặt câu hỏi cho người ở cấp cao hơn (Lính → Tướng quân, Tướng quân → Code Vương, Code Vương → user), chạy 3 câu:
+Trước khi hỏi role cấp cao hơn, trả lời ba câu:
 
-1. **Đủ thông tin?** — Trả lời được từ spec/repo/convention/standard engineering/my knowledge?
-2. **Đảo ngược được?** — Chi phí đảo ngược thấp, không gây mất dữ liệu/không đổi contract?
-3. **Trong scope?** — Nằm trong Task Contract / scope đã cấp / non-goals không bị vi phạm?
+1. **Đủ thông tin?** Có thể trả lời từ task contract, repo, convention hoặc check không?
+2. **Đảo ngược được?** Quyết định có thể hoàn tác với chi phí thấp không?
+3. **Trong scope?** Có nằm trong owner/write-set/non-goals hiện tại không?
 
-Cả 3 **YES** → tự quyết theo bậc C1/C2, **không hỏi**. Bất kỳ NO nào → xác định reason thuộc C3 hay cần làm rõ trong chain trước.
+Ba câu YES → tự quyết C1/C2. Bất kỳ NO nào → phân loại nguyên nhân: blocker factual/contract route cho Lead; C3 hỏi user. Không hỏi chỉ để xin reassurance.
 
 ## One-question budget
 
-- Mỗi vấn đề hỏi người dùng **tối đa 1 lần**, luôn kèm **recommended default**.
-- Không trả lời ở lượt tiếp theo → **thực thi default + announce** nếu việc reversible và không phải evidence-only; irreversible/evidence-only ghi `Unresolved` hoặc `Pending-human` và chờ.
-- Không hỏi lặp cùng một câu (hỏi lặp = lãng phí attention).
-- Gate 1 (intent confirmation) là **ngoại lệ fail-closed**: phải có explicit approval words; im lặng không được coi là xác nhận. Sau Gate 1, mọi lựa chọn trong scope đã cấp là thẩm quyền của chain.
+- Mỗi vấn đề hỏi user tối đa một lần; luôn kèm default.
+- Nếu user không trả lời: dùng default khi việc reversible và trong scope; nếu cần evidence/authority của user hoặc không reversible, ghi `Unresolved`/`Pending-human` và không tự claim hoàn tất.
+- Không hỏi lặp cùng một câu. Xác nhận intent lần hai chỉ cần khi intent thực sự mơ hồ hoặc thay đổi material.
 
-## Anti-over-ask (đối chiếu nhanh)
+## Pathway
 
-| Ý nghĩ | Hành vi đúng |
-|---|---|
-| "Hỏi user cho chắc" | Chạy self-answerable test; self-answerable thì tự quyết |
-| "Đây là quyết định Maintainer, phải hỏi" | Trong scope đã cấp thì không — chỉ C3 mới hỏi |
-| "Hỏi lại lần nữa cho chắc" | One-question budget: đã hỏi → thực thi default |
-
-## Quyết định pathway chuẩn
-
-```
+```text
 Có lựa chọn → Self-answerable test
-  ├─ 3×YES → C1 (im lặng + rationale) hoặc C2 (announce) → proceed
-  └─ NO nào đó →
-        ├─ Evidence-only → hỏi user 1 lần kèm default; nếu im lặng → Unresolved + tiếp lane độc lập
-        ├─ Scope/intent change → C3 hỏi user
-        ├─ Irreversible → C3 hỏi user
-        └─ Không rõ trong chain → route tới role sở hữu (Lính → Tướng quân → Code Vương)
+  ├─ 3×YES → C1/C2 → proceed (announce khi cần)
+  └─ có NO →
+       ├─ factual/contract blocker → Lead
+       ├─ scope/intent, secret/authority, irreversible → C3 → user
+       └─ evidence chưa đủ nhưng có lane độc lập → ghi Unresolved và kiểm chứng lane đó
 ```
+
+Tự tin quyết định không thay thế bằng chứng. Chưa verify runtime/code thực tế phải ghi `Unresolved` hoặc `Pending-validation`.

@@ -1,11 +1,12 @@
 # Team Channel — Operations
 
-Paseo 0.6 không có chat-channel/message-bus API. Các primitives thật: `create_agent`, `send_agent_prompt`, `get_agent_activity`, terminals, heartbeats, và **shared workspace filesystem**. Team Channel là cơ chế tối thiểu cho multi-round conversation giữa 2+ agent, enforced bằng tooling (file + watchdog), không middleware giả định.
+Paseo 0.6 không có chat-channel/message-bus API. Các primitives thật: `create_agent`, `send_agent_prompt`, `get_agent_activity`, terminals, heartbeats, và **shared workspace filesystem**. Team Channel là cơ chế opt-in cho multi-round conversation giữa 2+ agent, enforced bằng tooling (file + watchdog), không middleware giả định.
 
 ## Khi nào mở channel
 
-- **Cần thiết**: live multi-round exchange giữa roles — lead↔lead (nhiều Tướng quân song song), hoặc Reviewer hỏi peer trực tiếp giữa review.
+- **Cần thiết**: live multi-round exchange giữa roles — General Lead↔Specialist Lead, nhiều peer leads song song, hoặc Reviewer hỏi Worker trực tiếp giữa review.
 - **Không cần**: single-thread work — hierarchy `send_agent_prompt` + finish reports là đủ.
+- Không mở channel chỉ để ghi heartbeat, thay thế handoff, hoặc làm cho một task nhỏ trông có vẻ được giám sát.
 
 ## Khởi tạo (bởi supervisor — Code Vương)
 
@@ -17,9 +18,9 @@ node <channel-tool> init \
 ```
 
 - `<channel-tool>` = `$PASEO_HOME`… thực tế: `~/.agents/skills/paseo-team/assets/channel/channel.mjs` (bản đang dùng).
-- Members JSON: `[{agentId, role, persona, parent?}]`; role ∈ supervisor/lead/peer/reviewer; peer/reviewer **bắt buộc** `parent` = lead agentId; supervisor member phải bằng `--by`; `--max-rounds` nên ≥ fan-out (vd 20) chứ không để default 3.
+- Members JSON: `[{agentId, role, persona, parent?}]`; role ∈ supervisor/lead/peer/reviewer; General Lead là lead duy nhất không có `parent`, Specialist Lead phải có `parent` = General Lead agentId; peer/reviewer **bắt buộc** `parent` = lead agentId; supervisor member phải bằng `--by`; `--max-rounds` nên ≥ fan-out (vd 20) chứ không để default 3.
 - Channel dir (global): `$PASEO_HOME/team-channels/v1/<workspaceId>/<channelId>/` (mặc định `$HOME/.paseo`). Không tạo `.team/` trong project.
-- `init` cài 1 cron watchdog (`*/10 * * * *`, marker riêng — tần suất thấp, là lưới an toàn cho notification mất, không phải poll nhanh); `close` gỡ entry. Re-init idempotent (giữ marker, thay roster/budgets nhưng **không reset mission.json**) — dùng để **đăng ký member mới** với full roster mới nhất.
+- `init` cài 1 cron watchdog (`*/10 * * * *`, marker riêng — tần suất thấp, là lưới an toàn cho notification mất, không phải poll nhanh); `close` gỡ entry. Re-init giữ `createdAt`, mission và mọi budget không được truyền lại; flag budget chỉ override có chủ đích và bị reject nếu thấp hơn usage hiện tại. Dùng re-init để **đăng ký member mới** với full roster mới nhất.
 
 ## File layout
 
@@ -32,6 +33,7 @@ Mission lease tối thiểu: `missionId`, `intentHash`, `ownerId`, `leaseEpoch`,
 | Lệnh | Công dụng |
 |---|---|
 | `help [role\|command]` (hay `--help`/`-h`, kể cả gõ thiếu) | Cheat sheet: lệnh, message schema, routing matrix, "một turn đúng quy trình". Lọc theo role hoặc lệnh. **Điểm tự học của agent mới.** |
+| `sync <dir> <agentId>` | Một snapshot read-only: mission, unread, open obligations, own budget và close hint. Entry point mặc định cho mỗi exchange point. |
 | `unread <dir> <agentId>` | Inbound chưa đọc (authoritative read view) |
 | `inbox <dir> <agentId>` | Mục mình nợ trả lời (open questions/escalates) |
 | `post <dir> '<json>'` | Gửi; validate member/routing/replyTo/thread/budget; tự gán id/ts/round |
@@ -62,12 +64,12 @@ Denied default: peer→supervisor, peer→lead khác/peer/reviewer (trừ reply-
 
 - Correlation: reply set `replyTo` + inherit `threadId`; `post` reject replyTo sai thread.
 - `question`/`escalate` actionable tới khi người được hỏi post `answer`/`ack`/`eod` bất kỳ trong thread. `read` không settle.
-- Mỗi turn: đọc `unread` + `inbox` → trả lời đúng những gì nợ → `read` receipt → `eod` khi hết. Batch-answer + `wake` dưới tải.
+- Mỗi turn: `sync` → trả lời đúng những gì nợ → `read` receipt. `answer`/`ack` đã settle obligation thì không post thêm `eod`; chỉ dùng `eod` khi không có substantive reply. Chạy `sync` lần hai trước finish chỉ khi post vừa rồi có thể đổi close readiness. Batch-answer + `wake` dưới tải.
 - Escalate (`kind: escalate`) chỉ tới supervisor; supervisor route theo attention thresholds, reply `ack`.
 
 ## Loop avoidance (3 guard)
 
-1. **Budget**: `maxRoundsPerMember` (mặc định 3 — size theo fan-out, vd `--max-rounds 20`), `maxThreadsPerMember` (4), `maxMessages` (250; supervisor nên close trước).
+1. **Budget**: `maxRoundsPerMember` (channel mới mặc định 3 — size theo fan-out, vd `--max-rounds 20`), `maxThreadsPerMember` (4), `maxMessages` (250; supervisor nên close trước). Re-init không truyền flag sẽ giữ budget cũ, không hạ về default.
 2. **Reply-scoping**: `inbox` chỉ liệt kê câu hỏi trực tiếp chưa trả lời; trả lời đúng nợ rồi `eod`.
 3. **Supervisor close**: `status` báo `closeHint` → supervisor `close`. Rounds hết mà còn open = non-converging → escalation thường.
 
@@ -83,19 +85,19 @@ Denied default: peer→supervisor, peer→lead khác/peer/reviewer (trừ reply-
 
 <!-- brief:channel -->
 ```text
-  A team channel is open for this task: channel {{channelId}}, directory {{channelDir}} (in the canonical workspace). Read {{channelDir}}/rules.md and {{channelDir}}/mission.json first. Treat missionId + leaseEpoch + owner/scope/non-goals/acceptance as the durable contract after compact. You are auto-joined as {{role}} (parent: {{parentAgentId}}). Before your first post run `node channel.mjs --help {{role}}` to see exactly who you may address and the message schema. At each exchange point use `node channel.mjs unread {{channelDir}} {{agentId}}` and `node channel.mjs inbox {{channelDir}} {{agentId}}`, answer exactly what you owe (kind answer/ack/eod), then mark consumed messages with `node channel.mjs read {{channelDir}} {{agentId}} <messageId...>` and post everything through `node channel.mjs post`. Do not run these commands in a sleep/status/activity polling loop; if there is no event or exchange point, return `PENDING` and stop the turn. Do not hand-edit messages/, receipts/, supervisor/, or mission.json. After compact/resume, read mission.json before any tool that mutates the workspace and post a concise checkpoint if the lease epoch or scope is unclear. Post kind eod when you have nothing more; never continue an exchange past your round budget. Escalate to the supervisor only via kind escalate. Run `node channel.mjs status {{channelDir}}` before finishing and report unread/open items.
+  Channel {{channelId}} at {{channelDir}}. Read rules.md once. At each real exchange point run `node channel.mjs sync {{channelDir}} {{agentId}}`; its missionId + leaseEpoch + scope/non-goals/acceptance are durable after compact. You are {{role}} (parent {{parentAgentId}}). Answer only open obligations through `post`, then mark consumed IDs with `read`; an answer/ack already settles its thread, so do not add ceremonial eod. Run sync again only if your post may change close readiness. No sleep/status/activity polling: with no event, return PENDING and stop the turn. Never hand-edit channel state. Before mutation after compact, sync and stop if lease/scope is unclear. Escalate only through kind escalate; never exceed your budget.
 ```
 
 ## Register member mới (lead tạo child)
 
-Lính/Reviewer/Decision Peer tạo bởi Tướng quân phải được đăng ký để tham gia channel: re-init với **full roster mới nhất** (supervisor agentId ở `--by`, cùng channel-id/workspace, peer/reviewer có `parent` đúng). Không cần opt-in của member.
+Worker/Reviewer/Decision Peer tạo bởi Lead phải được đăng ký để tham gia channel: re-init với **full roster mới nhất** (supervisor agentId ở `--by`, cùng channel-id/workspace, peer/reviewer có `parent` đúng). Không cần opt-in của member.
 
 ## Verify mechanism
 
-`assets/channel/test-channel.mjs` (44 assertions — routing matrix, threads, read receipts, budgets, close), `test-supervisor.mjs` (10), `test-cron-lifecycle.mjs` (9). Chạy với Node ≥ 18.
-## Channel discipline (bắt buộc)
+`assets/channel/test-channel.mjs` (routing, sync, threads, receipts, re-init budgets, close), `test-supervisor.mjs`, `test-cron-lifecycle.mjs`. Chạy với Node ≥ 18; không hard-code assertion count trong tài liệu.
+## Channel discipline (chỉ áp dụng khi channel đã mở)
 
-- Channel messages là record trao đổi; `mission.json` là nguồn sự thật cho mission lease. finishNotification/notification có thể bị mất (daemon không đáng tin) — không bao giờ dựa một mình vào chúng.
-- Mọi turn kết thúc với blocker / gate verdict / work-chunk hoàn tất / cần bước tiếp theo: **bắt buộc post info/answer/eod lên channel trước khi finish**; checkpoint chỉ ghi khi có thay đổi material, không post heartbeat nghi thức mỗi turn.
-- Role nào pause work phải post: cái gì đang chặn, bị chặn bởi ai, gì sẽ unblock.
-- Supervisor audit `unread`/`inbox` đầu mỗi turn (không poll giữa chừng khi mọi thứ bình thường — event-first; watchdog `*/10` là lưới an toàn); nếu lane finished còn follow-up và không ai running → resume role chịu trách nhiệm ngay, không chờ notification.
+- Channel messages là record trao đổi; `mission.json` là nguồn sự thật cho mission lease. Notification có thể mất, nên không dựa vào notification một mình.
+- Mỗi exchange bắt đầu bằng `sync`; trả lời obligation qua `post`, đánh dấu message đã đọc, rồi kết thúc. Chỉ `post` checkpoint khi có thay đổi material; không gửi heartbeat nghi thức.
+- Turn kết thúc khi có blocker, verdict, work-chunk hoàn tất hoặc next action phải để lại record; role pause phải nói rõ blocker và điều kiện unblock.
+- Supervisor dùng watchdog như lưới an toàn event-first; không poll `status/activity` giữa chừng khi không có event mới.

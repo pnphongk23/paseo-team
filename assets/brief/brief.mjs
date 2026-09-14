@@ -50,7 +50,13 @@ const ROLE_CONFIG = {
     ]),
   },
   worker: { core: "worker-core", stages: new Map([["task", []]]) },
-  reviewer: { core: "reviewer-core", stages: new Map([["review", []]]) },
+  reviewer: {
+    core: "reviewer-core",
+    stages: new Map([
+      ["review", []],
+      ["supervisor", ["supervisor-compliance"]],
+    ]),
+  },
   peer: { core: "peer-core", stages: new Map([["task", []]]) },
   "planning-reviewer": {
     core: "planning-reviewer-core",
@@ -96,13 +102,13 @@ function parseArgs(argv) {
 
 function usage() {
   return `Usage:
-  node assets/brief/brief.mjs --role lead --stage init --persona <persona> --owner <scope> --task <task> --workspace-id <workspaceId>
+  node assets/brief/brief.mjs --role lead --stage init --persona <persona> --owner <scope> --task <task> --workspace-id <workspaceId> [--parent-agent-id <generalLeadId>]
   node assets/brief/brief.mjs --role worker --stage task --persona <warrior> --owner <scope> --task <task> --workspace-id <workspaceId> --parent-agent-id <leadId> --goal <goal> --owned-files <files> --non-goals <non-goals> --acceptance <acceptance> --checks <checks> --handback <format>
-  node assets/brief/brief.mjs --role reviewer --stage review --persona <label> --owner <scope> --task <task> --workspace-id <workspaceId> --parent-agent-id <leadId> --candidate <identity> --lens-owns <question> --lens-excludes <out-of-scope> --lens-evidence <evidence> --acceptance <acceptance> --checks <checks>
+  node assets/brief/brief.mjs --role reviewer --stage <review|supervisor> --persona <label> --owner <scope> --task <task> --workspace-id <workspaceId> --parent-agent-id <leadId> --candidate <identity> --lens-owns <question> --lens-excludes <out-of-scope> --lens-evidence <evidence> --acceptance <acceptance> --checks <checks>
 
   Roles: lead, worker/linh, reviewer, peer/decision-peer, planning-reviewer.
   Every brief includes the selected role and the paseo-team SKILL.md path.
-  Stages: lead init|plan|review|channel; worker task; reviewer review; peer task; planning-reviewer review.
+  Stages: lead init|plan|review|channel; worker task; reviewer review|supervisor; peer task; planning-reviewer review.
 Output is text by default; use --format json to return { role, stage, initialPrompt }.`;
 }
 
@@ -168,6 +174,17 @@ function reviewPacketText(options) {
   ].join("\n");
 }
 
+function supervisorPacketText(options) {
+  return [
+    "SUPERVISOR AUDIT PACKET",
+    `Audit: ${options.task}`,
+    `Acceptance: ${options.acceptance}`,
+    `Checks/artifacts: ${options.checks}`,
+    `Frozen raw packet identity: ${options.candidate}`,
+    `Parent: ${options.parentAgentId}`,
+  ].join("\n");
+}
+
 function buildBrief(rawOptions) {
   const role = normalizeRole(rawOptions.role);
   const options = { format: "text", ...rawOptions, role };
@@ -180,13 +197,18 @@ function buildBrief(rawOptions) {
     options.persona = role === "reviewer" ? "Independent reviewer" : role === "peer" ? "Independent Decision Peer" : "Planning Reviewer";
   }
   requireFields(options, role);
-    if (stage === "channel") {
-      const missingChannel = ["channelId", "channelDir", "agentId"].filter((key) => !options[key]);
-      if (missingChannel.length) fail(`missing required fields: ${missingChannel.join(", ")}`);
-    }
+  if (stage === "channel") {
+    const missingChannel = ["channelId", "channelDir", "agentId"].filter((key) => !options[key]);
+    if (missingChannel.length) fail(`missing required fields: ${missingChannel.join(", ")}`);
+  }
 
-    const blocks = loadBlocks();
-    const ids = ["paseo-team-context", config.core, ...config.stages.get(stage)];
+  const blocks = loadBlocks();
+    const ids = [
+      "paseo-team-context",
+      ...(role === "lead" && stage === "init" ? ["role-routing"] : []),
+      role === "reviewer" && stage === "supervisor" ? "supervisor-reviewer-core" : config.core,
+      ...config.stages.get(stage),
+    ];
   const values = {
     persona: options.persona,
     owner: options.owner,
@@ -197,13 +219,18 @@ function buildBrief(rawOptions) {
     lensOwns: options.lensOwns || "not applicable",
     lensExcludes: options.lensExcludes || "not applicable",
     lensEvidence: options.lensEvidence || "not applicable",
+      reviewOutput: role === "reviewer" && stage === "supervisor"
+      ? "CAP <=350 words: `VERDICT: CLEAR|VIOLATION|INSUFFICIENT_EVIDENCE`; <=5 findings as `criterion | event/time | evidence | required action`; <=3 attention gaps. No recap."
+      : "CAP <=500 words: `VERDICT: CLEAR|CHANGES_REQUIRED|BLOCKED`; <=6 findings ordered BLOCKER -> REQUIRED -> NIT -> FUTURE, each `severity | file:line | evidence | required action`; <=3 uncertainty bullets. Never omit BLOCKER/REQUIRED: group common root causes and drop NIT/FUTURE first. No recap.",
     packet: role === "worker" ? packetText(options) : "not applicable",
-    reviewPacket: role === "reviewer" ? reviewPacketText(options) : "not applicable",
+      reviewPacket: role === "reviewer"
+        ? (stage === "supervisor" ? supervisorPacketText(options) : reviewPacketText(options))
+        : "not applicable",
     channelId: options.channelId || "not applicable",
-      channelDir: options.channelDir || "not applicable",
-      agentId: options.agentId || "not applicable",
-      role,
-      skillPath: SKILL_FILE,
+    channelDir: options.channelDir || "not applicable",
+    agentId: options.agentId || "not applicable",
+    role,
+    skillPath: SKILL_FILE,
   };
   const missingBlocks = ids.filter((id) => !blocks.has(id));
   if (missingBlocks.length) fail(`canonical contract block(s) missing: ${missingBlocks.join(", ")}`);

@@ -15,6 +15,7 @@ import path from "node:path";
 const TOOL = path.join(import.meta.dirname, "channel.mjs");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "team-channel-test-"));
 const CH = path.join(TMP, "team-demo");
+const REINIT_CH = path.join(TMP, "reinit-budget");
 const MEMBERS = [
   { agentId: "cv-1", role: "supervisor", persona: "Code Vuong" },
   { agentId: "tq-a", role: "lead", persona: "Chu Du" },
@@ -71,7 +72,80 @@ fs.mkdirSync(CH, { recursive: true });
     check("re-init preserves mission identity, epoch and checkpoint", reinit.code === 0 && afterReinit.missionId === beforeReinit.missionId && afterReinit.leaseEpoch === 2 && afterReinit.checkpoint?.milestone === "handoff-read");
   }
 
-// 2. permission matrix — every edge of the spec
+// 2. re-init preserves lifecycle metadata and omitted budgets.
+{
+  fs.mkdirSync(REINIT_CH, { recursive: true });
+  const initial = run([
+    "init", REINIT_CH, "--channel-id", "reinit-budget", "--by", "cv-1",
+    "--members", JSON.stringify(MEMBERS), "--max-rounds", "20", "--max-threads", "8",
+    "--max-messages", "300", "--no-supervisor-job",
+  ]);
+  const before = JSON.parse(fs.readFileSync(path.join(REINIT_CH, "channel.json"), "utf8"));
+  check("custom budget init succeeds", initial.code === 0 && before.budgets.maxRoundsPerMember === 20);
+  const reinit = run([
+    "init", REINIT_CH, "--channel-id", "reinit-budget", "--by", "cv-1",
+    "--members", JSON.stringify(MEMBERS), "--no-supervisor-job",
+  ]);
+  const after = JSON.parse(fs.readFileSync(path.join(REINIT_CH, "channel.json"), "utf8"));
+  check("re-init preserves omitted budgets", reinit.code === 0
+    && after.budgets.maxRoundsPerMember === 20
+    && after.budgets.maxThreadsPerMember === 8
+    && after.budgets.maxMessages === 300);
+  check("re-init preserves createdAt", after.createdAt === before.createdAt);
+
+  for (let index = 0; index < 4; index += 1) {
+    run(["post", REINIT_CH, JSON.stringify({ from: "tq-a", to: ["tq-b"], kind: "info", body: `used-${index}` })]);
+  }
+  const tooLow = run([
+    "init", REINIT_CH, "--channel-id", "reinit-budget", "--by", "cv-1",
+    "--members", JSON.stringify(MEMBERS), "--max-rounds", "3", "--no-supervisor-job",
+  ]);
+  check("re-init rejects budget below observed usage", tooLow.code !== 0, tooLow.err);
+  const invalid = run([
+    "init", REINIT_CH, "--channel-id", "reinit-budget", "--by", "cv-1",
+    "--members", JSON.stringify(MEMBERS), "--max-rounds", "0", "--no-supervisor-job",
+  ]);
+  check("init rejects non-positive budget", invalid.code !== 0, invalid.err);
+  }
+
+  // 3. immutable functional manifest and dual-blind supervisor audit protocol
+  {
+    const manifestRoot = path.join(TMP, "candidate");
+    fs.mkdirSync(manifestRoot, { recursive: true });
+    fs.writeFileSync(path.join(manifestRoot, "a.txt"), "alpha\n");
+    fs.writeFileSync(path.join(manifestRoot, ".DS_Store"), "local noise\n");
+    const manifest = run(["manifest", manifestRoot, "a.txt", ".DS_Store"]).out;
+    check("manifest excludes .DS_Store and is content-addressed", manifest.files.length === 1 && manifest.files[0].path === "a.txt" && /^[a-f0-9]{64}$/.test(manifest.digest));
+    const criteria = { criteria: ["ROLE_BOUNDARY", "EVENT_FIRST"], packet: "frozen-raw-packet" };
+    const tooMany = run(["audit-launch", CH, "--manifest-json", JSON.stringify(manifest), "--criteria-json", JSON.stringify(criteria), "--reviewers-json", JSON.stringify(["a", "b", "c"])]);
+    check("audit launch rejects more than exactly two reviewers", tooMany.code !== 0);
+    const launch = run(["audit-launch", CH, "--manifest-json", JSON.stringify(manifest), "--criteria-json", JSON.stringify(criteria), "--reviewers-json", JSON.stringify(["a", "b"])]);
+    check("audit launch binds manifest and criteria digests", launch.code === 0 && launch.out.state === "AWAITING_SECOND_START" && launch.out.manifestDigest === manifest.digest && launch.out.invocationDigest);
+    const invocationArgs = ["--manifest-digest", launch.out.manifestDigest, "--criteria-digest", launch.out.criteriaDigest];
+    const mismatchedStart = run(["audit-start", CH, "--reviewer-id", "a", "--manifest-digest", "0".repeat(64), "--criteria-digest", launch.out.criteriaDigest]);
+    check("reviewer invocation rejects a mismatched frozen digest", mismatchedStart.code !== 0);
+    const firstStart = run(["audit-start", CH, "--reviewer-id", "a", ...invocationArgs]);
+    const firstVerdict = run(["audit-verdict", CH, "--reviewer-id", "a", ...invocationArgs, "--verdict", "CLEAR"]);
+    check("first verdict is blocked until second reviewer starts", firstStart.code === 0 && firstVerdict.code !== 0);
+    const secondStart = run(["audit-start", CH, "--reviewer-id", "b", ...invocationArgs]);
+    const auditState = JSON.parse(fs.readFileSync(path.join(CH, "supervisor", "compliance-audit.json"), "utf8"));
+    check("both reviewer invocations share frozen packet and criteria digests", secondStart.code === 0 && auditState.reviewers.every((item) => item.manifestDigest === manifest.digest && item.criteriaDigest === launch.out.criteriaDigest));
+    run(["audit-verdict", CH, "--reviewer-id", "a", ...invocationArgs, "--verdict", "CLEAR"]);
+    run(["audit-verdict", CH, "--reviewer-id", "b", ...invocationArgs, "--verdict", "CLEAR"]);
+    const clearMerge = run(["audit-merge", CH]);
+    check("merge is CLEAR only after two independent CLEAR verdicts", clearMerge.code === 0 && clearMerge.out.state === "CLEAR");
+
+    const unresolved = run(["audit-launch", CH, "--manifest-json", JSON.stringify(manifest), "--criteria-json", JSON.stringify(criteria), "--reviewers-json", JSON.stringify(["c", "d"])]);
+    const unresolvedArgs = ["--manifest-digest", unresolved.out.manifestDigest, "--criteria-digest", unresolved.out.criteriaDigest];
+    run(["audit-start", CH, "--reviewer-id", "c", ...unresolvedArgs]);
+    run(["audit-start", CH, "--reviewer-id", "d", ...unresolvedArgs]);
+    run(["audit-verdict", CH, "--reviewer-id", "c", ...unresolvedArgs, "--verdict", "CLEAR"]);
+    run(["audit-verdict", CH, "--reviewer-id", "d", ...unresolvedArgs, "--verdict", "VIOLATION"]);
+    const unresolvedMerge = run(["audit-merge", CH]);
+    check("non-unanimous verdicts fail closed as UNRESOLVED", unresolved.code === 0 && unresolvedMerge.code === 0 && unresolvedMerge.out.state === "UNRESOLVED");
+  }
+
+  // 4. permission matrix — every edge of the spec
 const matrix = [
   // [from, to, expected, label]
   ["cv-1", "tq-a", true, "supervisor → lead"],
@@ -100,7 +174,7 @@ for (const [f, t, want, label] of matrix) {
   check(`permit ${label} ${want ? "ALLOW" : "DENY"}`, (r.code === 0) === want, `${f}->${t}: ${r.out.reason ?? r.err}`);
 }
 
-// 3. multi-round exchange: lead asks lead, reviewer asks peer, peer answers (reply-scoped)
+  // 5. multi-round exchange: lead asks lead, reviewer asks peer, peer answers (reply-scoped)
 {
   const q1 = post({ from: "tq-a", to: ["tq-b"], kind: "question", body: "Tách module X?" });
   check("lead→lead question ok", q1.code === 0);
@@ -121,8 +195,16 @@ for (const [f, t, want, label] of matrix) {
 
   const es = post({ from: "tq-a", to: ["cv-1"], kind: "escalate", body: "cần quyết định" });
   check("lead→supervisor escalate ok", es.code === 0);
-  const esBad = post({ from: "ln-a1", to: ["cv-1"], kind: "escalate", body: "lén" });
-  check("peer escalate denied", esBad.code !== 0);
+    const esBad = post({ from: "ln-a1", to: ["cv-1"], kind: "escalate", body: "lén" });
+    check("peer escalate denied", esBad.code !== 0);
+
+    const syncA = run(["sync", CH, "ln-a1"]);
+    check("sync returns mission, unread, inbox and own budget in one snapshot", syncA.code === 0
+      && syncA.out.mission?.missionId
+      && syncA.out.unread?.count >= 2
+      && syncA.out.inbox?.open >= 1
+      && syncA.out.budget?.maxRoundsPerMember === 3,
+    JSON.stringify(syncA.out));
 
   // inbox reflects the still-open items
   const inboxA = run(["inbox", CH, "ln-a1"]);
@@ -155,7 +237,7 @@ for (const [f, t, want, label] of matrix) {
   check("closeHint appears when no open items", st.out.closeHint !== null, JSON.stringify(st.out.closeHint));
 }
 
-// 4. round budget
+  // 5. round budget
 {
   const r1 = post({ from: "tq-b", to: ["tq-a"], kind: "question", body: "r1" });
   const r2 = post({ from: "tq-b", to: ["tq-a"], kind: "question", body: "r2" });
@@ -166,7 +248,7 @@ for (const [f, t, want, label] of matrix) {
   check("rounds reports exhaustion", rd.out.exhausted === true, JSON.stringify(rd.out));
 }
 
-// 5. close lifecycle
+  // 6. close lifecycle
 {
   const cNonSup = post({ from: "tq-a", to: ["*"], kind: "close", body: "tự đóng" });
   check("non-supervisor cannot post close", cNonSup.code !== 0);

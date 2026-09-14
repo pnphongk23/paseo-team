@@ -1,48 +1,61 @@
-# Review Scoring — Five-point Assessment
+# Review Scoring — Risk-Based Independent Review
 
-Score toàn bộ logical task (không phải từng commit). **Ghi R trước khi launch review**, tính lại từ diff thật.
+Use this file only to decide whether a technical Reviewer is worth the coordination cost and how large that review should be. The Lead owns the scoring; Code Vương checks only that the administrative record exists.
 
-## Ba dimension (0–5)
+## 1. Decide whether review is needed
 
-**Surface (S)** — phạm vi diff
-- `0` một file nhỏ · `1` một hai file · `2` 3–5 file/module nhỏ · `3` 6–10 file hoặc cross-module · `4` 11–20 file, multi-package, diff lớn · `5` broad cross-cutting, generated/configured surfaces, >20 file.
+An independent review is **required** when any of these is true:
 
-**Impact (I)** — tác động
-- `0` formatting/docs · `1` isolated local behavior · `2` một bounded feature/module · `3` shared behavior/public contract · `4` persistence/auth/payment/deploy/release · `5` security, destructive migration, data-loss, authorization boundary, production-critical.
+- `I ≥ 3` (shared behavior, public contract, persistence, auth, payment, deploy or release);
+- `U ≥ 3` (unresolved behavior/contract, weak acceptance or difficult rollback);
+- `S ≥ 2` (three or more files/modules or a cross-module change);
+- the user explicitly requests review, or the work is security/migration/release sensitive.
 
-**Uncertainty (U)** — độ chắc chắn
-- `0` requirement rõ, checks mạnh, dễ revert · `1` minor unknowns, checks tin cậy · `2` partial coverage/coupling vừa · `3` unresolved behavior/contract detail · `4` acceptance mơ hồ hoặc khó verify/rollback · `5` intent mơ hồ, không có check tin cậy, irreversible.
+For a small isolated change with `S ≤ 1`, `I ≤ 2`, `U ≤ 1` and strong focused checks, Lead verification is sufficient; do not create a Reviewer ceremonially.
 
-## Ngân sách review: R = S + I + U
+## 2. Score the task
 
-| R | Số reviewer | Điều kiện |
-|---|---|---|
-| ≤3 | 1 lightweight | correctness/evidence, output ngắn |
-| 4–8 | 1 | correctness/evidence |
-| 9–12 | 2 | correctness/evidence + architecture/risk |
-| 13–15 | 3 | 3 lens riêng + ghi reason |
+Score the whole logical task, not each commit. Recalculate from the actual candidate diff before launch.
 
-**Overrides:** Mọi frozen candidate → tối thiểu 1 reviewer độc lập. `I ≥ 4` → tối thiểu 2 reviewer. `I = 5` + (`U ≥ 4` hoặc irreversible) → 3 reviewer. Handoff không tính là reviewer, không đổi R.
+**Surface (S), 0–5**
 
-Lens cho 3 reviewer: correctness/evidence · architecture/risk · security/migration/release/specialist. Quân sư là 1 trong các lens đó (không tự thêm lane).
+- `0` one small file · `1` one or two files · `2` 3–5 files/module · `3` 6–10 files or cross-module · `4` 11–20 files/multi-package · `5` broad cross-cutting, generated/configured or >20 files.
 
-## Review rules
+**Impact (I), 0–5**
 
-- Review là **budget, không pipeline**: lượng hóa S/I/U trước launch; default 1 lightweight reviewer; quy mô theo bảng trên. Chỉ mở thêm lens khi có câu hỏi độc lập cụ thể.
-- **Cheap-first launch:** trước khi tạo reviewer, đọc mọi `list_profiles().notes` và chọn profile chi phí thấp nhất được cấu hình cho review/read-only. Materialize `provider/model/settings`; không giả định có tham số `profile`. Chỉ nâng lên model/lens mạnh hơn khi `I≥4`, `U≥4`, security/migration/release, hoặc reviewer nhẹ trả `BLOCKED` vì thiếu năng lực suy luận. Nếu không có profile phù hợp, dùng provider discovery thay vì đoán model và ghi rõ fallback.
-- Reviewer chỉ review **đúng stable candidate identity** (commit/diff hash, worktree snapshot, hoặc WIP branch head — ghi rõ trong handback; không bắt buộc là commit); target đang đổi → từ chối, yêu cầu freeze. Review bản đang sửa = false confidence, tệ hơn không review.
-- Reviewer mặc định read-only. Nếu được giao bounded fix với write-set rõ, reviewer phải ghi `editedSurface`, phát hành candidate identity mới và không được tính là independent reviewer duy nhất trên surface vừa sửa; review cycle mới chỉ mở theo materiality/risk, không tự động nhân đôi reviewer cho mọi nit.
-- **Commit discipline: 1 task = 1 commit cuối.** Vòng fix không sinh commit: Lính sửa trong cùng worktree/WIP branch, đưa identity mới. Khi review pass, Tướng quân squash/consolidate thành 1 commit ở acceptance. Không squash khi review còn mở trên identity cũ. Evidence giữ ở handback/report, không nhét vào lịch sử commit.
-- `R` cuối cùng do **Code Vương xác nhận lại từ diff thật** trước khi launch; implementer không tự ấn định ngân sách review cho chính mình (chống self-benchmark).
-- `BLOCKER` phải chứng minh: sai intent, không đạt acceptance, design unimplementable, data loss, authorization/security failure, irreversible unsafe action. Sở thích đặt tên, speculative extensibility, pseudocode signature, debt không liên quan ≠ blocker.
-- Reviewers độc lập song song: 1 lane đầu cho correctness/evidence trước. First-pass packet chỉ chứa Task Contract, frozen candidate, raw diff/artifacts và checks; không chứa verdict, suspected bug hay proposed fix của implementer. Mỗi lane phải ghi rõ `owns` (câu hỏi mình chịu trách nhiệm), `excludes` (không review), và `evidence` (artifact/check cần đọc). Nếu không có câu hỏi riêng thì không mở lane; giữ dissent thay vì gộp thành đồng thuận.
-- Sau mỗi handback, **Tướng quân freeze candidate identity** và ghi vào report trước khi launch/relaunch review. Review cycle sau chỉ xét: fixes, unresolved findings, contradictions do fixes tạo ra. Dimension audit mới = `SCOPE_CHANGE_PROPOSAL` (trừ khi lộ blocker).
-- Tối đa **2 full review cycles**; cycle 2 chỉ cho `BLOCKER`/`REQUIRED` từ cycle 1. Cùng blocker lặp lại / blocker mới > blocker đã solve / scope phình → `BLOCKED_NON_CONVERGING`: nếu reversible và trong scope, chain tự quyết continue / đổi hướng / dừng theo evidence + cost; chỉ leo C3 nếu material/irreversible.
-- Planning Reviewer chỉ đánh giá delta sau `PLAN_FINAL`; không mở lại cùng architecture question nếu candidate không có evidence mới. Reviewer edit không phải quyền mặc định và không được làm mất candidate identity/independence contract.
-- Không role nào cho formal approval. Khi review budget hoàn tất, không còn `BLOCKER`/`REQUIRED`, final commit đã tạo và Code Vương đã kiểm tra artifact, ghi lifecycle `ACCEPTED`; đây là trạng thái hoàn tất workflow, không phải formal approval.
+- `0` formatting/docs · `1` isolated local behavior · `2` bounded feature/module · `3` shared behavior/public contract · `4` persistence/auth/payment/deploy/release · `5` security, destructive migration, data loss or authorization boundary.
 
-## Báo cáo review (Tướng quân → Code Vương)
+**Uncertainty (U), 0–5**
 
-`S`, `I`, `U`, tổng `R`, số reviewer budgeted, từng reviewer (ID, workspace, lens, verdict), lý do chọn budget, mọi cycle phụ kèm trigger. Code Vương verify qua Paseo rằng agents hoàn thành (không `error`/`closed`/blocked/canceled; lane failed/superseded được ghi, replacement thành công thỏa budget), kiểm tra artifact/evidence tồn tại và lifecycle; không tự phán architecture hay chấp nhận test-pass/review claim trần.
+- `0` clear requirement, strong checks, easy revert · `1` minor unknowns · `2` partial coverage/coupling · `3` unresolved behavior/contract · `4` unclear acceptance or rollback · `5` unclear intent, no reliable check or irreversible action.
 
-**Anti duplicate proof**: Reviewer inspect evidence của owner (đọc report + diff + artifacts), **không rerun ceremonial** cùng validation để xác nhận cho có — rerun chỉ khi doubt cụ thể không resolve được từ evidence. Code Vương chỉ được re-verify lifecycle/evidence presence; technical key checks thuộc Lead/reviewer lens.
+## 3. Set the review budget
+
+Let `R = S + I + U`. Use the smallest budget that answers independent questions:
+
+| R | Default reviewers | Lens |
+|---|---:|---|
+| `≤3` | 1 | correctness/evidence |
+| `4–8` | 1 | correctness/evidence |
+| `9–12` | 2 | correctness/evidence + architecture/risk |
+| `13–15` | 3 | separate risk/security/specialist lenses |
+
+Overrides: `I ≥ 4` requires at least 2; `I = 5` plus `U ≥ 4` or an irreversible action requires 3. If no reviewer has a distinct question, do not open another lane. A planning reviewer is part of the pre-plan branch, not an extra technical-review lens.
+
+## 4. Review procedure
+
+When review is selected:
+
+1. Lead freezes the candidate surface and records one immutable identity (commit, diff hash or worktree snapshot).
+2. Launch fresh reviewers with explicit `owns`, `excludes` and `evidence`. Reviewers are read-only and receive only the task contract, frozen candidate, raw diff/artifacts and checks—not the implementer's verdict or proposed fix.
+3. Reviewers report `CLEAR`, `CHANGES_REQUIRED` or `BLOCKED`, with findings ordered `BLOCKER → REQUIRED → NIT → FUTURE`.
+4. Lead resolves `BLOCKER`/`REQUIRED`. Any mutation invalidates the identity and requires a fresh review of the changed surface; reviewers never edit files.
+5. Allow at most two review cycles. Repeated blockers or scope growth is `BLOCKED_NON_CONVERGING`; use the decision ladder for the next reversible choice.
+
+Commit discipline is a delivery detail owned here: one logical task has one final consolidated commit after review, when the repository workflow requires commits. Do not rewrite a candidate while its review is open.
+
+## 5. Handoff record
+
+Lead reports `S`, `I`, `U`, `R`, review decision/trigger, candidate identity, reviewer IDs/workspaces/lenses/verdicts, findings and checks. Code Vương verifies only lifecycle, identity/evidence presence and agent state; it does not recalculate technical impact or accept a bare test-pass/review claim.
+
+Anti-duplicate proof: Reviewer reads the owner's evidence and reruns a check only when a concrete doubt remains. Do not repeat validation as ceremony.
