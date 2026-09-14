@@ -20,25 +20,22 @@ General Lead (technical and outcome owner)
 
 The mission must designate one user-facing Code Vương and exactly one General Lead. Titles and personas do not create additional authority.
 
-Before creating Workers, the General Lead MUST run the Lead Delegation Gate. Use the direct path only for one specified packet, one coupled/small slice, or residual work where a Lead would add no coordination value. Create bounded Specialist Leads first when any of these is true: open planning/architecture/contracts requires its own decomposition (create one Planning Lead); work splits into two or more independent domains or worker streams (create Domain Lead(s)); a stream needs two or more Workers, multi-round coordination, or its own review loop; or direct fan-out would exceed two active Worker/Reviewer lanes. The Lead owning a delegated slice manages its Workers and any risk-selected review; the General Lead converges Lead handbacks instead of supervising every Worker directly. A normal/Domain Lead may implement, coordinate, create Workers, and select Reviewers inside its slice, but MUST NOT create a Lead.
+## Routing, role contract and Paseo prerequisite
 
-## Mandatory role contract and Paseo prerequisite
+Routing is defined once, in the `brief:role-routing` block of [briefing-contracts.md](references/briefing-contracts.md) and expanded once in the [Lead Delegation Gate](references/role-contracts.md): before creating any Worker or Reviewer the General Lead runs that gate, and no child creates a Lead.
 
-Every role MUST read [`references/role-contracts.md`](references/role-contracts.md) in full before taking any action. This reference is mandatory and is not optional branch reading.
+The builder-generated brief is the canonical behavioral contract for the role it names and is self-contained for the routine path: a role acts on its brief without pre-reading this skill or [`references/role-contracts.md`](references/role-contracts.md). Read that reference only to select or launch a role, to cross or escalate a boundary, to run a Supervisor Compliance audit, or when a brief names a rule it does not define.
 
 Code Vương and General Lead/Tướng quân have an additional hard prerequisite: before routing or creating/prompting any agent, they MUST read the `/paseo` skill (`paseo/SKILL.md`) in full, call `list_profiles`, and read the notes of every returned Paseo profile. They must materialize the selected profile's combined `provider/model`, mode, thinking, feature, workspace, parent, label, and notification values exactly; they must not guess or use stale profile data. If the skill, profile notes, Paseo tools, or workspace identity is unavailable, stop with the applicable blocked state and do not fall back to direct work.
 
-There is exactly one General Lead for the outcome. It may create multiple bounded Specialist Leads, but there is at most one Planning Lead per mission and no duplicate Lead for the same slice. A Specialist Lead owns only its explicit domain: a Domain/normal Lead may create bounded Workers and risk-selected Reviewers inside that domain, while a Planning Lead owns the planning/reviewer loop unless explicitly assigned a separate delivery slice. No Specialist Lead may create another Lead or change the overall outcome. Do not impose a fixed total child count; stop when no independent slice remains. Direct work remains valid for coupled or very small slices. Do not create a channel, watchdog, Planning Reviewer, or extra Reviewer unless the routing rules below select it. A Reviewer is selected for the smallest stable logical candidate required by the risk rubric, not automatically once per Worker.
+Direct work stays valid for coupled or very small slices. Do not impose a fixed total child count; stop when no independent slice remains. Do not create a channel, watchdog, Planning Reviewer, or extra Reviewer unless the routing rules select it. A Reviewer is selected for the smallest stable logical candidate required by the risk rubric, not automatically once per Worker.
 
-The canonical role-routing rule is the `brief:role-routing` block in [briefing-contracts.md](references/briefing-contracts.md): the General Lead runs the Lead Delegation Gate; open plan/architecture routes to one Planning Lead, multi-domain or multi-worker coordination routes to bounded Domain Lead(s), one already-specified implementation packet may route directly to a Worker, and otherwise the General Lead keeps the work.
+## Workflow
 
-## Default workflow
-
-1. **Route** — Code Vương reads the mandatory role contract and Paseo prerequisite, then creates one General Lead with `node assets/brief/brief.mjs`. An unambiguous user request does not need a second approval turn. Ask the user only for a C3 decision.
-2. **Scout and choose** — General Lead reads the mission lease, inspects the relevant workspace, and runs the Lead Delegation Gate before any Worker fan-out. Use the Pre-plan addendum only for genuinely open architecture/planning/contracts or `I ≥ 4` or `U ≥ 4`; an open plan that needs its own decomposition gets one Planning Lead, which owns the plan/reviewer loop instead of General Lead running a duplicate one.
-3. **Execute** — On the delegated path, General Lead creates bounded Planning/Domain Lead(s) first, with explicit scope, non-goals, write-set, acceptance, checks and handback. A Planning Lead returns PLAN_FINAL; Domain Leads then own their in-slice Worker coordination and review selection. General Lead may keep one direct residual/coupled slice, but must not also directly supervise every Worker in a delegated slice. On the direct path, it may implement or assign one specified Worker packet. Domain/normal Leads may implement, coordinate, create Workers and select Reviewers inside their slice, but no child creates a Lead.
-4. **Review when selected** — The Lead closest to the changed slice selects the smallest stable logical candidate that the risk rubric requires, normally after its Workers converge; do not create one Reviewer per Worker by default. General Lead adds a mission-level/cross-slice Reviewer only when the rubric requires it. Freeze the candidate, launch the budgeted read-only lens, resolve material findings, and re-freeze after every mutation. The rubric and cycle rules live only in [review-scoring.md](references/review-scoring.md).
-5. **Handoff** — General Lead reports changes, evidence, checks, uncertainty and next action to Code Vương. Code Vương verifies lifecycle/evidence presence and routes events; it does not inspect diffs to make technical judgments.
+- **Route** — Code Vương creates the one General Lead with `node assets/brief/brief.mjs`. An unambiguous user request needs no second approval turn; only a C3 decision goes back to the user.
+- **Own and delegate** — the General Lead scopes the outcome and applies the routing rule above. Delegated slices get their Leads first, each with explicit scope, non-goals, write-set, acceptance, checks and handback; the General Lead keeps at most one residual/coupled slice and converges Lead handbacks instead of supervising every Worker.
+- **Review when selected** — [review-scoring.md](references/review-scoring.md) owns the review trigger, budget, cycle rules and the pre-plan branch threshold. The owning Lead freezes the candidate and re-freezes after every mutation.
+- **Handoff** — the General Lead reports changes, evidence, checks, uncertainty and next action. Code Vương verifies lifecycle/evidence presence and routes events; it does not inspect diffs or make technical judgments.
 
 ## Roles and boundaries
 
@@ -68,7 +65,7 @@ Vietnamese titles and persona names are labels only; they do not create extra au
 
 ## Reference routing
 
-Before any action, every role must read `references/role-contracts.md`. Then read only the additional reference needed by the current branch:
+Read only the reference needed by the current branch (`references/role-contracts.md` is gated as described above):
 
 - [role-contracts.md](references/role-contracts.md) — mandatory role boundaries, Paseo prerequisites, and authority rules.
 - [briefing-contracts.md](references/briefing-contracts.md) — build or update a role brief.

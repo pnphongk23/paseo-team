@@ -18,7 +18,7 @@ Builder chỉ tạo `initialPrompt` và kiểm tra field; provider/model/mode/fe
 - `reviewer/review`: technical candidate; `reviewer/supervisor`: frozen Supervisor activity packet. Cả hai có identity và lens `owns/excludes/evidence` riêng.
 - `peer/task` và `planning-reviewer/review`: dùng đúng block tương ứng khi seat thực sự cần.
 
-`references/role-contracts.md` là canonical cho behavioral role rules khi wording khác với overview. Builder phải fail nếu block được chọn còn placeholder chưa thay hoặc packet bắt buộc bị thiếu. Role brief là self-contained cho luồng thường lệ, nhưng mọi role vẫn phải đọc `references/role-contracts.md` trước action; agent chỉ đọc thêm full skill/reference khi brief có ambiguity hoặc task đi vào nhánh được reference đó định tuyến. Không thêm policy mới vào initial prompt ngoài block canonical.
+`references/role-contracts.md` là canonical cho behavioral role rules khi wording khác với overview. Builder phải fail nếu block được chọn còn placeholder chưa thay hoặc packet bắt buộc bị thiếu. Role brief là canonical cho luồng thường lệ và đã self-contained: role hành động theo brief, không phải đọc trước `references/role-contracts.md`. Chỉ đọc reference đó khi chọn/launch role, khi đổi hoặc escalate boundary, khi chạy Supervisor Compliance audit, hoặc khi brief nhắc một rule mà brief không định nghĩa; ngoài ra chỉ đọc thêm reference thuộc nhánh đang chạy. Không thêm policy mới vào initial prompt ngoài block canonical.
 
 Supervisor stage selection is exact: only `role=reviewer` and `stage=supervisor` may use the Supervisor Compliance prompt block; ordinary reviewer stages retain the technical-review block.
 

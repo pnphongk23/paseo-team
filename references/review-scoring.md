@@ -13,6 +13,8 @@ An independent review is **required** when any of these is true:
 
 For a small isolated change with `S ≤ 1`, `I ≤ 2`, `U ≤ 1` and strong focused checks, Lead verification is sufficient; do not create a Reviewer ceremonially.
 
+Planning branch: use the Pre-plan addendum only for genuinely open architecture/planning/contracts, or `I ≥ 4`, or `U ≥ 4`. Open planning gets exactly one Planning Lead (reuse an existing one; never duplicate the same planning scope), and that Lead owns the plan/reviewer loop instead of the General Lead running a duplicate one.
+
 ## 2. Score the task
 
 Score the whole logical task, not each commit. Recalculate from the actual candidate diff before launch.

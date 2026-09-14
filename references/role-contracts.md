@@ -1,6 +1,6 @@
 # Paseo Team — Canonical Role Rules
 
-This file is the mandatory behavioral contract for every Paseo Team role. It is not optional branch reading. A role must read this file before routing, planning, brainstorming, delegating, implementing, reviewing, auditing, or reporting. `briefing-contracts.md` renders prompt blocks; this file defines the role boundaries those blocks must preserve.
+This file is the canonical behavioral contract for Paseo Team roles: the definition every generated brief must preserve. The builder-generated brief is canonical for the role it names and is self-contained for the routine path, so a role does not read this file before acting. Read it to select or launch a role, to cross or escalate a boundary, to run a Supervisor Compliance audit, or when a brief names a rule it does not define. `briefing-contracts.md` renders prompt blocks; this file defines the role boundaries those blocks must preserve.
 
 ## Mandatory Paseo prerequisite
 
