@@ -65,6 +65,11 @@ const SUPERVISOR_CRON = "*/10 * * * *";
 const DEFAULT_OVERDUE_MS = 30 * 60 * 1000;
 const DEFAULT_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_REMINDERS = 3;
+const LEDGER_FILE = "ledger.md";
+const LEDGER_MIN_BYTES = 512;
+const LEDGER_MIN_MEMBERS = 6;
+const LEDGER_MIN_SUBSTANTIVE = 20;
+const LEDGER_STALE_POSTS = 15;
 const RULES_MD = `# Team channel routing matrix (canonical)
 
 Members: see channel.json. Roles: supervisor, lead, peer, reviewer.
@@ -454,6 +459,79 @@ function listMessages(ch) {
     .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id < b.id ? -1 : 1));
 }
 
+/* ---------------------------- mission ledger ----------------------------- */
+
+function ledgerPath(ch) {
+  return path.join(ch._dir, LEDGER_FILE);
+}
+
+/**
+ * FROZEN ledger contract (member-ledger.md), one shared probe for init/checkpoint/lease/close:
+ *   obligated = members >= 6 OR substantive posts (question|answer|info) >= 20
+ *   MISSING   = ledger.md absent OR size < 512 B
+ *   STALE     = obligated AND ledger present AND >= 15 substantive posts newer than its mtimeMs
+ */
+function ledgerStatus(ch) {
+  const messages = listMessages(ch);
+  const substantive = messages.filter((m) => SUBSTANTIVE.has(m.kind)).length;
+  const members = (ch.members || []).length;
+  const obligated = members >= LEDGER_MIN_MEMBERS || substantive >= LEDGER_MIN_SUBSTANTIVE;
+  const file = ledgerPath(ch);
+  let missing = true;
+  let stale = false;
+  if (fs.existsSync(file)) {
+    const size = fs.statSync(file).size;
+    missing = size < LEDGER_MIN_BYTES;
+    if (!missing && obligated) {
+      const mtimeMs = fs.statSync(file).mtimeMs;
+      stale = messages.filter((m) => SUBSTANTIVE.has(m.kind) && Date.parse(m.ts) > mtimeMs).length >= LEDGER_STALE_POSTS;
+    }
+  }
+  return { policy: ch.ledgerPolicy, members, substantive, obligated, missing, stale, path: file };
+}
+
+/**
+ * Enforcement matrix. policy === 1 is enforced; an ABSENT policy is legacy
+ * (warn only, never block); any other value is not checked. canBlock is true
+ * only where the command is allowed to block (new init, checkpoint).
+ */
+function ledgerGate(ch, { canBlock = false } = {}) {
+  const status = ledgerStatus(ch);
+  let action = "none";
+  if (status.policy === 1) {
+    if (status.obligated) {
+      if (status.missing) action = canBlock ? "block" : "warn";
+      else if (status.stale) action = "warn";
+    }
+  } else if (status.policy === undefined && status.obligated && (status.missing || status.stale)) {
+    action = "warn";
+  }
+  return { action, status };
+}
+
+function ledgerBlockMessage(status, command) {
+  return `mission ledger required (${status.members} seats, ${status.substantive} substantive posts): write ${status.path} (>= ${LEDGER_MIN_BYTES} bytes) first, then re-run ${command}`;
+}
+
+function ledgerWarnMessage(status, command) {
+  const why = status.missing
+    ? `missing or smaller than ${LEDGER_MIN_BYTES} bytes`
+    : `${LEDGER_STALE_POSTS}+ substantive posts newer than its mtime`;
+  return `ledger.md is ${why} (${status.members} seats, ${status.substantive} substantive posts); ${command} continues — update ${status.path}`;
+}
+
+function ledgerReport(status) {
+  return {
+    status: status.missing ? "missing" : "stale",
+    obligated: status.obligated,
+    members: status.members,
+    substantive: status.substantive,
+    policy: status.policy === undefined ? "legacy" : status.policy,
+  };
+}
+
+const ledgerWarn = (status, command) => console.error(`channel: WARN ${ledgerWarnMessage(status, command)}`);
+
 function resolveTo(ch, to) {
   const idx = memberIndex(ch);
   const out = new Set();
@@ -570,6 +648,12 @@ function cmdInit(dir, o) {
   if (existingChannel?.createdBy && existingChannel.createdBy !== o.by) {
     fail(`only existing supervisor ${existingChannel.createdBy} may re-init this channel`);
   }
+  // Ledger gate: a NEW heavy channel must not exist without its ledger; re-init and
+  // legacy channels only warn (never block). Runs before channel.json/crontab writes.
+  const ledgerPolicy = existingChannel ? existingChannel.ledgerPolicy : 1;
+  const ledger = ledgerGate({ _dir: channelDir, members, ledgerPolicy }, { canBlock: !existingChannel });
+  if (ledger.action === "block") fail(ledgerBlockMessage(ledger.status, "init"), 3);
+  if (ledger.action === "warn") ledgerWarn(ledger.status, "init");
   const existingMessages = existingChannel ? listMessages(existingChannel) : [];
   const usedRounds = Math.max(0, ...members.map((member) => roundsOf(existingMessages, member.agentId)));
   const usedThreads = Math.max(0, ...members.map((member) => threadsCreatedBy(existingMessages, member.agentId)));
@@ -619,6 +703,7 @@ function cmdInit(dir, o) {
       channelId: o.channelId,
       name: o.name || existingChannel?.name || o.channelId,
       state: "open",
+      ledgerPolicy,
       createdAt: existingChannel?.createdAt || now(),
       createdBy: existingChannel?.createdBy || o.by,
       updatedAt: now(),
@@ -647,7 +732,7 @@ function cmdInit(dir, o) {
     }));
   }
   fs.writeFileSync(path.join(channelDir, "rules.md"), RULES_MD);
-  console.log(JSON.stringify({
+  const result = {
       ok: true,
       channelId: ch.channelId,
       dir: channelDir,
@@ -656,7 +741,9 @@ function cmdInit(dir, o) {
       mission: loadMission(channelDir),
       budgets: ch.budgets,
       supervisor: ch.supervisor,
-    }));
+    };
+  if (ledger.action === "warn") result.ledger = ledgerReport(ledger.status);
+  console.log(JSON.stringify(result));
 }
 
 function cmdPath(o) {
@@ -1026,6 +1113,9 @@ function cmdCheckpoint(ch, by, raw, candidateIdentity, leaseEpoch) {
     fail("checkpoint requires --json <object>");
   }
   if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)) fail("checkpoint --json must be an object");
+  const ledger = ledgerGate(ch, { canBlock: true });
+  if (ledger.action === "block") fail(ledgerBlockMessage(ledger.status, "checkpoint"), 3);
+  if (ledger.action === "warn") ledgerWarn(ledger.status, "checkpoint");
   const updated = {
     ...mission,
     checkpoint,
@@ -1033,7 +1123,9 @@ function cmdCheckpoint(ch, by, raw, candidateIdentity, leaseEpoch) {
     updatedAt: now(),
   };
   writeJsonAtomic(missionPath(ch._dir), updated);
-  console.log(JSON.stringify({ ok: true, mission: updated }, null, 2));
+  const result = { ok: true, mission: updated };
+  if (ledger.action === "warn") result.ledger = ledgerReport(ledger.status);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 function cmdLease(ch, by, ownerId, handoffRef, predecessor) {
@@ -1044,6 +1136,8 @@ function cmdLease(ch, by, ownerId, handoffRef, predecessor) {
   if (!mission) fail(`channel ${ch.channelId} has no mission.json`);
   const owner = ch.members.find((member) => member.agentId === ownerId && member.role === "lead");
   if (!owner) fail(`lease owner ${ownerId} must be a channel lead`);
+  const ledger = ledgerGate(ch);
+  if (ledger.action === "warn") ledgerWarn(ledger.status, "lease");
   const updated = {
     ...mission,
     ownerId,
@@ -1053,7 +1147,9 @@ function cmdLease(ch, by, ownerId, handoffRef, predecessor) {
     updatedAt: now(),
   };
   writeJsonAtomic(missionPath(ch._dir), updated);
-  console.log(JSON.stringify({ ok: true, mission: updated }, null, 2));
+  const result = { ok: true, mission: updated };
+  if (ledger.action === "warn") result.ledger = ledgerReport(ledger.status);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 const ROLE_SCOPE = {
@@ -1116,12 +1212,19 @@ function cmdHelp(filter) {
     "",
   ];
 
+  const ledger = [
+    `Ledger obligation (channel.json ledgerPolicy: 1): obligated when members >= ${LEDGER_MIN_MEMBERS} OR substantive posts (${[...SUBSTANTIVE].join("|")}) >= ${LEDGER_MIN_SUBSTANTIVE}; ledger.md (same dir as channel.json) must be >= ${LEDGER_MIN_BYTES} bytes.`,
+    `  STALE when ${LEDGER_STALE_POSTS}+ substantive posts are newer than ledger.md mtime. policy 1: new init MISSING -> BLOCK; checkpoint MISSING -> BLOCK, STALE -> warn; lease/close -> warn only.`,
+    "  legacy (no ledgerPolicy): warn only, never block. sync never reads the ledger.",
+    "",
+  ];
+
   if (filter && ROLES.includes(filter)) {
     console.log([...header, `ROLE: ${filter.toUpperCase()}`, `  ${ROLE_SCOPE[filter]}`, "", ...matrix, ...turn, "Run `channel.mjs --help` for the full command list."].join("\n"));
     return;
   }
   if (filter) {
-    console.log([...header, "Commands (dir = channel dir from `path`/`init`):", ...commands.map((l) => (l.includes(filter) ? `>> ${l}` : `   ${l}`)), "", ...postSchema, ...matrix, ...turn].join("\n"));
+    console.log([...header, "Commands (dir = channel dir from `path`/`init`):", ...commands.map((l) => (l.includes(filter) ? `>> ${l}` : `   ${l}`)), "", ...postSchema, ...matrix, ...ledger, ...turn].join("\n"));
     return;
   }
   console.log([
@@ -1131,6 +1234,7 @@ function cmdHelp(filter) {
     "",
     ...postSchema,
     ...matrix,
+    ...ledger,
     ...turn,
     "See references/channel-operations.md for watchdog + member registration.",
   ].join("\n"));
@@ -1138,6 +1242,8 @@ function cmdHelp(filter) {
 
 function cmdClose(ch, by) {
   if (by !== ch.createdBy) fail("only the channel creator (supervisor) may close");
+  const ledger = ledgerGate(ch);
+  if (ledger.action === "warn") ledgerWarn(ledger.status, "close");
   ch.state = "closed";
   ch.closedAt = now();
   writeJsonAtomic(path.join(ch._dir, "channel.json"), ch);
@@ -1161,6 +1267,7 @@ function cmdClose(ch, by) {
     supervisorJobError = error instanceof Error ? error.message : String(error);
   }
   const result = { ok: supervisorJobError === null, channelId: ch.channelId, state: ch.state, supervisorJobRemoved };
+  if (ledger.action === "warn") result.ledger = ledgerReport(ledger.status);
   if (supervisorJobError) result.supervisorJobError = supervisorJobError;
   console.log(JSON.stringify(result));
   if (supervisorJobError) process.exitCode = 1;

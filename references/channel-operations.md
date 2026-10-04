@@ -19,12 +19,29 @@ node <channel-tool> init \
 
 - `<channel-tool>` = `$PASEO_HOME`… thực tế: `~/.agents/skills/paseo-team/assets/channel/channel.mjs` (bản đang dùng).
 - Members JSON: `[{agentId, role, persona, parent?}]`; role ∈ supervisor/lead/peer/reviewer; General Lead là lead duy nhất không có `parent`, Specialist Lead phải có `parent` = General Lead agentId; peer/reviewer **bắt buộc** `parent` = lead agentId; supervisor member phải bằng `--by`; `--max-rounds` nên ≥ fan-out (vd 20) chứ không để default 3.
-- Channel dir (global): `$PASEO_HOME/team-channels/v1/<workspaceId>/<channelId>/` (mặc định `$HOME/.paseo`). Không tạo `.team/` trong project.
+- Channel dir (global): `$PASEO_HOME/team-channels/v1/<enc(workspaceId)>/<enc(channelId)>/` (mặc định `$HOME/.paseo`; `<enc(...)>` là `encodeURIComponent` — cả hai segment đều được encode, ví dụ slug `mission beta/2` thành `mission%20beta%2F2`). Không tạo `.team/` trong project.
 - `init` cài 1 cron watchdog (`*/10 * * * *`, marker riêng — tần suất thấp, là lưới an toàn cho notification mất, không phải poll nhanh); `close` gỡ entry. Re-init giữ `createdAt`, mission và mọi budget không được truyền lại; flag budget chỉ override có chủ đích và bị reject nếu thấp hơn usage hiện tại. Dùng re-init để **đăng ký member mới** với full roster mới nhất.
 
 ## File layout
 
-`channel.json` (state/members/budgets) · `mission.json` (durable mission lease/checkpoint) · `rules.md` (routing matrix — mọi member đọc trước khi post) · `messages/*.json` · `receipts/<agentId>.json` · `supervisor/reminders.json` + `heartbeat.json` (evidence/alerts). Cấm sửa tay `messages/`, `receipts/`, `supervisor/`; mission chỉ cập nhật qua command/tool có atomic write và giữ `missionId`/`leaseEpoch`.
+`channel.json` (state/members/budgets) · `mission.json` (durable mission lease/checkpoint) · `rules.md` (routing matrix — mọi member đọc trước khi post) · `messages/*.json` · `receipts/<agentId>.json` · `supervisor/reminders.json` + `heartbeat.json` (evidence/alerts) · `ledger.md` (mission ledger — viết tay theo [member-ledger.md](member-ledger.md), không nằm trên read path nào). Cấm sửa tay `messages/`, `receipts/`, `supervisor/`; mission chỉ cập nhật qua command/tool có atomic write và giữ `missionId`/`leaseEpoch`.
+
+### Nghĩa vụ ledger (enforcement)
+
+`channel.json` có field `ledgerPolicy` (hiện là `1`), **chỉ được ghi khi channel được tạo mới** và giữ nguyên khi re-init. Channel tạo trước khi có field này được coi là legacy.
+
+`obligated = (members.length >= 6) || (substantive >= 20)`. `MISSING` = thiếu `ledger.md` hoặc < 512 B. `STALE` = `obligated` và ≥15 post substantive sau `mtimeMs` của ledger.
+
+| Command | `MISSING` | `STALE` |
+|---|---|---|
+| `init` (channel **mới**, có `ledgerPolicy`, seats ≥ 6) | **BLOCK** | n/a |
+| `checkpoint` (khi `obligated`) | **BLOCK** | warn |
+| `lease` | warn | warn |
+| `close` | warn | warn |
+| `sync` | **không đổi** | **không đổi** |
+| legacy (không có `ledgerPolicy`) | warn, **không bao giờ block** | warn, **không bao giờ block** |
+
+Command chỉ thêm field `ledger` vào JSON output **khi thực sự có warn/block**, nên mọi đường không bị đụng vẫn giữ output byte-identical. Chi tiết luật ghi sổ: [member-ledger.md](member-ledger.md).
 
 Mission lease tối thiểu: `missionId`, `intentHash`, `ownerId`, `leaseEpoch`, `scope`, `nonGoals`, `acceptance`, `status`, `checkpoint`, `predecessor`, `handoffRef`, `updatedAt`. Mọi checkpoint, alert và candidate report phải tham chiếu `missionId + leaseEpoch`. `lease` là thao tác hành chính của supervisor: fence epoch cũ trước khi successor nhận việc; không tự động kill turn đang chạy.
 

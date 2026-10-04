@@ -56,6 +56,7 @@ Vietnamese titles and persona names are labels only; they do not create extra au
 - Lead/Worker use the [decision ladder](references/decision-authority.md) for reversible choices inside their scope; do not ask upward merely for reassurance.
 - Any unverified claim is `Unresolved` or `Pending-validation`. A test pass, review claim, exit code or handoff is not proof by itself.
 - A review is a risk control, not a mandatory pipeline step for every tiny change. Use [review-scoring.md](references/review-scoring.md) to select it.
+- Every mission keeps a **mission ledger** — [member-ledger.md](references/member-ledger.md). Code Vương creates it at dispatch and the parent Lead records every seat under it; per-seat `INTENT`/`MISSION` are the priority, everything else stays one line. It is a record for manual restore and reflection, never automatic recovery and never on the `sync` hot path. Above the obligation threshold `channel.mjs` enforces it: `init` blocks only a **new** channel at ≥6 seats and `checkpoint` only when the channel is obligated and the ledger is missing; lease, close, re-init and legacy channels only warn.
 
 ## Optional coordination
 
@@ -72,6 +73,7 @@ Read only the reference needed by the current branch (`references/role-contracts
 - [decision-authority.md](references/decision-authority.md) — classify an escalation or avoid over-asking.
 - [review-scoring.md](references/review-scoring.md) — decide and run an independent review.
 - [channel-operations.md](references/channel-operations.md) — open or operate a Team Channel.
+- [member-ledger.md](references/member-ledger.md) — record mission and per-member intent/mission for manual restore and reflection.
 - [supervisor-compliance.md](references/supervisor-compliance.md) — audit a concrete Supervisor/Code Vương incident.
 - [failure-handling.md](references/failure-handling.md) — recover from a failure or non-convergence.
 

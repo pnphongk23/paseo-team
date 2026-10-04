@@ -50,6 +50,8 @@ const id = (r) => r.out?.id;
 
 // 1. init
 fs.mkdirSync(CH, { recursive: true });
+// Frozen ledgerPolicy gate: a NEW 6-seat channel requires ledger.md (>= 512 B) before init.
+fs.writeFileSync(path.join(CH, "ledger.md"), `# Mission ledger — team-demo fixture\n${"ledger fixture note\n".repeat(40)}`);
 {
   const r = run(["init", CH, "--channel-id", "team-demo", "--by", "cv-1", "--members", JSON.stringify(MEMBERS), "--no-supervisor-job"]);
     check("init ok", r.code === 0 && r.out.ok === true, JSON.stringify(r.out));
@@ -75,6 +77,8 @@ fs.mkdirSync(CH, { recursive: true });
 // 2. re-init preserves lifecycle metadata and omitted budgets.
 {
   fs.mkdirSync(REINIT_CH, { recursive: true });
+  // Frozen ledgerPolicy gate: the same 6-seat roster requires ledger.md (>= 512 B) before its first init.
+  fs.writeFileSync(path.join(REINIT_CH, "ledger.md"), `# Mission ledger — reinit-budget fixture\n${"ledger fixture note\n".repeat(40)}`);
   const initial = run([
     "init", REINIT_CH, "--channel-id", "reinit-budget", "--by", "cv-1",
     "--members", JSON.stringify(MEMBERS), "--max-rounds", "20", "--max-threads", "8",

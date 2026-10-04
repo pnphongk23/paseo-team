@@ -80,6 +80,7 @@ const worker = buildBrief({
   handback: "files, candidate identity, results, deviations",
 });
 assert.match(worker, /Role: worker/);
+assert.match(worker, /Task: implement settings toggle/);
 assert.match(worker, /TASK_TEACH_BACK/);
 assert.match(worker, /PROCEED immediately/);
 assert.match(worker, /Owned files\/subtask: docs\/prototype\/screens\/settings\.html/);
@@ -142,7 +143,107 @@ const planningReviewer = buildBrief({
   persona: "Planning Reviewer",
 });
 assert.match(planningReviewer, /no more than three decision-changing CHALLENGE questions/);
+assert.match(planningReviewer, /Planning Reviewer for FEAT-015 in workspace wks-test/);
+assert.match(planningReviewer, /Task: challenge settings plan/);
+assert.match(planningReviewer, /Parent: lead-1\./);
 assert.ok(planningReviewer.length <= 1100, `planning reviewer prompt too large: ${planningReviewer.length} chars`);
+
+const peer = buildBrief({
+  role: "peer",
+  stage: "task",
+  persona: "Decision Peer",
+  owner: "FEAT-015 decision",
+  task: "challenge the settings rollout",
+  workspaceId: "wks-test",
+  parentAgentId: "lead-1",
+});
+assert.match(peer, /Own only the frozen question FEAT-015 decision in workspace wks-test/);
+assert.match(peer, /Task: challenge the settings rollout/);
+assert.match(peer, /Parent: lead-1\./);
+assert.ok(peer.length <= 900, `peer prompt too large: ${peer.length} chars`);
+
+// Regression for the owner/task/workspace-id/parent-agent-id field drop: the fixed
+// role/stage pairs must render their base fields, and every other pair must keep
+// rendering with unchanged field semantics. reviewer/supervisor has no {{owner}}
+// placeholder in its canonical block: pre-existing, outside this fix, encoded as a
+// known gap (its fields list omits owner).
+const BASE_MARKERS = {
+  owner: /OWNER_MARKER/,
+  task: /TASK_MARKER/,
+  workspaceId: /WS_MARKER/,
+  parentAgentId: /PARENT_MARKER/,
+};
+const fieldCases = [
+  { role: "lead", stage: "init", fields: ["owner", "task", "workspaceId"] },
+  { role: "lead", stage: "plan", fields: ["owner", "task", "workspaceId"] },
+  { role: "lead", stage: "review", fields: ["owner", "task", "workspaceId"] },
+  {
+    role: "lead",
+    stage: "channel",
+    fields: ["owner", "task", "workspaceId"],
+    extra: { channelId: "channel-1", channelDir: "/tmp/channel-1", agentId: "lead-1" },
+  },
+  {
+    role: "worker",
+    stage: "task",
+    fields: ["owner", "task", "workspaceId"],
+    extra: {
+      parentAgentId: "parent-marker",
+      goal: "goal",
+      ownedFiles: "files",
+      nonGoals: "non-goals",
+      acceptance: "acceptance",
+      checks: "checks",
+      handback: "handback",
+    },
+  },
+  {
+    role: "reviewer",
+    stage: "review",
+    fields: ["owner", "task", "workspaceId"],
+    extra: {
+      parentAgentId: "parent-marker",
+      candidate: "candidate",
+      lensOwns: "lens",
+      lensExcludes: "excluded",
+      lensEvidence: "evidence",
+      acceptance: "acceptance",
+      checks: "checks",
+    },
+  },
+  {
+    role: "reviewer",
+    stage: "supervisor",
+    fields: ["task", "workspaceId"],
+    extra: {
+      parentAgentId: "parent-marker",
+      candidate: "candidate",
+      lensOwns: "lens",
+      lensExcludes: "excluded",
+      lensEvidence: "evidence",
+      acceptance: "acceptance",
+      checks: "checks",
+    },
+  },
+  { role: "peer", stage: "task", fields: ["owner", "task", "workspaceId", "parentAgentId"], extra: { parentAgentId: "PARENT_MARKER" } },
+  { role: "planning-reviewer", stage: "review", fields: ["owner", "task", "workspaceId", "parentAgentId"], extra: { parentAgentId: "PARENT_MARKER" } },
+];
+for (const { role, stage, extra = {}, fields } of fieldCases) {
+  const prompt = buildBrief({
+    role,
+    stage,
+    persona: "Marker Persona",
+    owner: "OWNER_MARKER",
+    task: "TASK_MARKER",
+    workspaceId: "WS_MARKER",
+    ...extra,
+  });
+  assert.doesNotMatch(prompt, /\{\{[a-zA-Z0-9_-]+\}\}/, `${role}/${stage} leaves an unresolved placeholder`);
+  for (const field of fields) {
+    const option = { workspaceId: "workspace-id", parentAgentId: "parent-agent-id" }[field] || field;
+    assert.match(prompt, BASE_MARKERS[field], `${role}/${stage} drops --${option}`);
+  }
+}
 
 const channel = buildBrief({
   role: "lead",
